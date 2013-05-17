@@ -2,6 +2,19 @@
 
 This script provides three commands I have been always missing from Perforce command-line utilities.
 
+    usage: p5 [-h] {status,st,reconcile,re,diff,di} ...
+
+    positional arguments:
+      {status,st,reconcile,re,diff,di}
+                            Commands
+        status (st)         Shows status of workspace files (changed, missing,
+                            etc)
+        reconcile (re)      Interactively reconcile changes.
+        diff (di)           Show diff, including unopened files.
+
+    optional arguments:
+      -h, --help            show this help message and exit
+
 ## Commands
 
 ### `p5 reconcile`
@@ -10,7 +23,7 @@ Interactive reconcile. Uses `$EDITOR` environment variable for user interaction,
 
 ### `p5 status`
 
-Same as reconcile, but just prints list of changed files in the workspace. Works similar to `git status`.
+Works similar to `git status`: prints list of changed files in the workspace, including edited but unopened ones.
 
 ### `p5 diff`
 
