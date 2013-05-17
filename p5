@@ -2,11 +2,18 @@
 
 kStatusOpen = "open"
 kStatusNew = "new"
+kStatusDelete = "delete"
 kStatusUnchanged = "same/open"
 # these are defined by `p4`, you can't change them
 kStatusMissing = "missing"
 kStatusDiff = "diff"
 kStatusSame = "same"
+
+def p4escape(path):
+    return path.replace("%","%25").replace("@","%40").replace("#","%23").replace("*","%2A")
+
+def p4unescape(path):
+    return path.replace("%40","@").replace("%23","#").replace("%2A","*").replace("%25","%")
 
 def inspect(args):
     import subprocess, re, sys, os.path, fnmatch
@@ -18,12 +25,15 @@ def inspect(args):
     print("Checking opened files...", file=sys.stderr)
     output = subprocess.check_output(r"""p4 opened | sed -e 's/^\(.*\)#.*/\1/' | xargs p4 where | awk '//{print$3;}'""", shell=True).decode(errors='replace')
     for path in output.splitlines():
-        statuses[path] = kStatusOpen
+        statuses[p4unescape(path)] = kStatusOpen
     
     print("Checking unopened tracked files...", file=sys.stderr)
     output = subprocess.check_output("p4 diff -sl", shell=True).decode(errors='replace')
     for match in re.finditer(r'''^(\w+)\s+(.*)''', output, re.M):
         status, path = match.groups()
+        # files that are already oped for deletion will be 'missing' here
+        if (status == kStatusMissing) and (path in statuses):
+            status = kStatusDelete
         statuses[path] = status
     
     print("Searching unchanged files...", file=sys.stderr)
@@ -47,19 +57,20 @@ def inspect(args):
         basename = os.path.basename(path)
         relpath = os.path.relpath(path, root)
         for patt in ignores:
+            # shortcut for speed
             if (basename == patt) or (relpath == patt):
                 return True
-            if fnmatch.fnmatch(basename, patt) or (('/' in patt) and fnmatch.fnmatch(relpath, patt)):
+            # with '/', path is matched, otherwise, filename only
+            if fnmatch.fnmatch( (relpath if ('/' in patt) else basename), patt):
                 return True
-            if (patt[0] == '/'):
-                return relpath.startswith(patt[1:]) or fnmatch.fnmatch('/'+relpath, patt)
-            if relpath.startswith(patt.rstrip('/') + '/') or relpath.endswith('/' + patt.lstrip('/')) or ('/' + patt.strip('/') + '/') in relpath:
+            # exact full path patterns start with /
+            if (patt[0] == '/') and fnmatch.fnmatch(relpath, patt[1:]):
                 return True
         return False
 
-    command_from_status = { kStatusMissing : "delete", kStatusDiff : "edit", kStatusNew : "add", kStatusOpen : None, kStatusUnchanged : "revert" }
+    command_from_status = { kStatusMissing : "delete", kStatusDiff : "edit", kStatusNew : "add", kStatusOpen : None, kStatusDelete : None, kStatusUnchanged : "revert" }
     edit_part, revert_part, opened_part = [], [], []
-    destination_from_status = { kStatusMissing : edit_part, kStatusDiff : edit_part, kStatusNew : edit_part, kStatusOpen : opened_part, kStatusUnchanged : revert_part }
+    destination_from_status = { kStatusMissing : edit_part, kStatusDiff : edit_part, kStatusNew : edit_part, kStatusOpen : opened_part, kStatusDelete : opened_part, kStatusUnchanged : revert_part }
     for path in sorted(statuses.keys()):
         if is_ignored(path):
             continue
@@ -114,7 +125,13 @@ def reconcile(args):
 
         if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
         for _, command, path in edit_part:
-            print("p4 {0} {1}".format(command, path), file=tempy)
+            flag = ""
+            if ('@' in path) or ('#' in path) or ('%' in path):
+                if command == "add":
+                    flag = " -f"
+                elif (command == "delete") or (command == "edit"):
+                    path = p4escape(path)
+            print("p4 {0}{1} {2}".format(command, flag, path), file=tempy)
 
         if revert_part: print("\n\n# Opened but not changed (revert recommended):\n", file=tempy)
         for _, _, path in revert_part:
