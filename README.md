@@ -29,6 +29,20 @@ Works similar to `git status`: prints list of changed files in the workspace, in
 
 Shows combined diff, including unopened files that were modified.
 
+## Installation/Configuration
+
+This script assumes that `p4` command line tool is already configured and works from current folder. If it's not, you need to add something like this to your `~/.profile`:
+
+    export P4PORT=perforce.mycompany.com:1666
+    export P4USER=MyUsername
+    export P4CONFIG=.perforce
+
+then restart terminal or relogin, and create `.perforce` files in root of each workspace with the following line:
+
+    P4CLIENT=current-workspace-name
+
+Then do `p4 login` and check whether it works by doing something like `p4 opened` from a workspace folder. Seeing a list of opened files, or “File(s) not opened on this client.” message means everything is OK now. `p5` works wherever `p4` works.
+
 ## Ignoring files with `.p4ignore`
 
 If the workspace root contains `.p4ignore` file, it will be used. The format is similar to `.gitignore`:
