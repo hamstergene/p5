@@ -19,7 +19,7 @@ This script provides three commands I have been always missing from Perforce com
 
 ### `p5 reconcile`
 
-Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`.
+Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`. Works much, *much*, **much** faster than P4V's one.
 
 ### `p5 status`
 
@@ -44,4 +44,9 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 This program depends on `python3` and `p4`.
 
     brew install python3 p4
+
+I also recommend using this in your `.profile` for improved `p4 diff`/`p5 diff` experience:
+
+    export P4DIFF='git --no-pager diff --color'
+    export PAGER='less -R'
 
