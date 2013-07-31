@@ -132,7 +132,6 @@ def reconcile(args):
         for _, command, path in edit_part:
             flag = ""
             escapedPath = shellEscape(path)
-            print(path, escapedPath)
             if ('@' in path) or ('#' in path) or ('%' in path):
                 if command == "add":
                     flag = " -f"
