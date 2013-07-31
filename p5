@@ -9,6 +9,11 @@ kStatusMissing = "missing"
 kStatusDiff = "diff"
 kStatusSame = "same"
 
+def shellEscape(p):
+    if set(p).intersection( set(r'''~!@#$%^&*(){}[]"'\|<>? ''') ):
+        return "'" + p.replace("'", "\'\"\'\"\'") + "'"
+    return p
+
 def p4escape(path):
     return path.replace("%","%25").replace("@","%40").replace("#","%23").replace("*","%2A")
 
@@ -126,16 +131,18 @@ def reconcile(args):
         if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
         for _, command, path in edit_part:
             flag = ""
+            escapedPath = shellEscape(path)
+            print(path, escapedPath)
             if ('@' in path) or ('#' in path) or ('%' in path):
                 if command == "add":
                     flag = " -f"
                 elif (command == "delete") or (command == "edit"):
-                    path = p4escape(path)
-            print("p4 {0}{1} {2}".format(command, flag, path), file=tempy)
+                    escapedPath = p4escape(escapedPath)
+            print("p4 {0}{1} {2}".format(command, flag, escapedPath), file=tempy)
 
         if revert_part: print("\n\n# Opened but not changed (revert recommended):\n", file=tempy)
         for _, _, path in revert_part:
-            print("p4 revert {0}".format(path), file=tempy)
+            print("p4 revert {0}".format(shellEscape(path)), file=tempy)
 
         if opened_part: print("\n\n# For information only. Opened files:\n", file=tempy)
         for status, _, path in opened_part:
@@ -160,9 +167,6 @@ def reconcile(args):
             print("The list of already opened files:")
             for status, _, path in opened_part:
                 print("{0:>12} {1}".format(status, path))
-
-def shellEscape(p):
-    return "'" + p.replace("'", "\'\"\'\"\'") + "'"
 
 def diff(args):
     edit_part, revert_part, opened_part = inspect(args)
