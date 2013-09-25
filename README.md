@@ -1,16 +1,18 @@
 # `p5` : commands missing from Perforce's `p4`
 
-This script provides three commands I have been always missing from Perforce command-line utilities.
+This script provides a few commands I miss from Perforce command-line utilities.
 
-    usage: p5 [-h] {status,st,reconcile,re,diff,di} ...
+    usage: p5 [-h] {status,st,reconcile,re,diff,di,update,up} ...
 
     positional arguments:
-      {status,st,reconcile,re,diff,di}
+      {status,st,reconcile,re,diff,di,update,up}
                             Commands
         status (st)         Shows status of workspace files (changed, missing,
                             etc)
         reconcile (re)      Interactively reconcile changes.
         diff (di)           Show diff, including unopened files.
+        update (up)         Fetches the latest clientspec, updates client view,
+                            runs `p4 sync`. May create workspace if needed.
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -27,7 +29,24 @@ Works similar to `git status`: prints list of changed files in the workspace, in
 
 ### `p5 diff`
 
-Shows combined diff, including unopened files that were modified.
+Shows combined diff similar to `p4 diff`, but including unopened files that were modified.
+
+### `p5 update`
+
+Updates workspace if necessary, then runs `p4 sync`.
+
+    usage: p5 update [-h] [--force] [--create]
+
+    optional arguments:
+      -h, --help    show this help message and exit
+      --force, -f   Pass `-f` to `p4 sync`
+      --create, -c  Create workspace if it does not exist
+
+If there is `P5CLIENTSPEC` variable in the `.perforce` file, pointing to a depot file or a local file, fetches contents of that file, replaces whatever client name with current workspace name in every line like `//depot/path/... //ClientName/path/...`, and rewrites your current client view.
+
+With `-c` flag, forces creation of workspace associated with current folder using the name defined by `.perforce`. Note: the file must exist, `P4CLIENT` environment variable will not be used for this operation.
+
+In either case, this command runs `p4 sync`. The `-f` flag is passed down to `p4 sync`.
 
 ## Installation/Configuration
 
@@ -40,6 +59,10 @@ This script assumes that `p4` command line tool is already configured and works 
 then restart terminal or relogin, and create `.perforce` files in root of each workspace with the following line:
 
     P4CLIENT=current-workspace-name
+
+    # optional
+    # P5CLIENTSPEC=//depot/path/to/client_view_definition.txt
+    # P5CLIENTSPEC=/path/to/client_view_definition.txt
 
 Then do `p4 login` and check whether it works by doing something like `p4 opened` from a workspace folder. Seeing a list of opened files, or “File(s) not opened on this client.” message means everything is OK now. `p5` works wherever `p4` works.
 
