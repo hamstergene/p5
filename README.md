@@ -74,7 +74,7 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 * If pattern does not contain '/', it matches filename only.
 * If pattern has '/', it matches paths, relative to the workspace root.
 * Patterns are matched using `fnmatch` (supports `*` wildcards).
-* `.p4ignore` and `$P4CONFIG` files are not ignored by default. You have to add them manually if you need that.
+* `.p4ignore` file itself is not ignored by default. You may want to add it there if don't keep it under version control.
 
 ## Misc
 
