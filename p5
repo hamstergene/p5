@@ -101,6 +101,15 @@ def inspect(args):
         if is_ignored(path):
             continue
         status = statuses[path]
+        
+        # ignore resource forks problem with 'apple' file types
+        # http://theaccidentalreleaseengineer.blogspot.ru/2007/12/perforce-apple-filetype-and-mysterious.html
+        if status == kStatusNew:
+            basename = os.path.basename(path)
+            dirname = os.path.dirname(path)
+            if basename.startswith('%') and (os.path.join(dirname, basename[1:]) in statuses):
+                continue
+
         command = command_from_status[status]
         destination_list = destination_from_status[status]
         destination_list.append((status, command, path))
