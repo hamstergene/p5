@@ -87,3 +87,7 @@ I also recommend using this in your `.profile` for improved `p4 diff`/`p5 diff` 
     export P4DIFF='git --no-pager diff --color'
     export PAGER='less -R'
 
+## Known problems
+
+* renamed/moved files are detected as "edited but not changed" and revert is incorrectly recommended
+
