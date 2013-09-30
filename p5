@@ -212,9 +212,9 @@ def sync(args):
         raise SystemExit(1)
 
     import re, os.path, fnmatch
-    output = subprocess.check_output("p4 client -o", shell=True, universal_newlines=True)
-    client = re.search(r'''^Client:\s+(.*)''', output, re.M).group(1)
-    root = re.search(r'''^Root:\s+(.*)''', output, re.M).group(1)
+    viewdef = subprocess.check_output("p4 client -o", shell=True, universal_newlines=True)
+    client = re.search(r'''^Client:\s+(.*)''', viewdef, re.M).group(1)
+    root = re.search(r'''^Root:\s+(.*)''', viewdef, re.M).group(1)
 
     # update clientspec
     workspace_config_filename = os.path.join(root, p4config)
@@ -223,9 +223,16 @@ def sync(args):
         if m:
             clientspec_path = m.group(1)
             if clientspec_path.startswith('//'):
-                ### TODO: run p4 diff -sl, and if this file is locally modified, make sure to open it and use it instead.
-                # be sure to print notice after sync about that!
-                clientspec_contents = subprocess.check_output("p4 print -q " + shellEscape(clientspec_path), shell=True, universal_newlines=True)
+                # check if this file is mapped to clientview and locally modified, and use local modifications instead
+                output = subprocess.check_output("p4 have {0}".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
+                m = re.search(r'''^//[^\s]+ - (.*)$''', output, re.M)
+                if m:
+                    clientspec_path = m.group(1)
+                    print("Clientspec is mapped to this view, using it instead: {0}".format(clientspec_path))
+                    clientspec_contents = open(m.group(1), "r").read()
+                else:
+                    print("Fetching clientspec from depot: {0}".format(clientspec_path))
+                    clientspec_contents = subprocess.check_output("p4 print -q " + shellEscape(clientspec_path), shell=True, universal_newlines=True)
             else:
                 clientspec_contents = open(clientspec_path, "r").read()
 
@@ -239,7 +246,7 @@ def sync(args):
             # because if a folder is deleted from mapping, some old files may start being displayed as 'new'
 
             # recreate client
-            new_clientspec = output
+            new_clientspec = viewdef
             new_clientspec = re.sub(r'''^(Options:\s+)(.*)$''', r'''\1allwrite noclobber compress unlocked modtime rmdir''', new_clientspec, flags=re.M)
             new_clientspec = re.sub(r'''^(.*\nView:\s*\n).*$''', r'''\1''' + clientspec_contents, new_clientspec, flags=re.DOTALL)
             proc = subprocess.Popen("p4 client -i", stdin=subprocess.PIPE, shell=True, universal_newlines=True)
