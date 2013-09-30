@@ -216,6 +216,8 @@ def sync(args):
     client = re.search(r'''^Client:\s+(.*)''', viewdef, re.M).group(1)
     root = re.search(r'''^Root:\s+(.*)''', viewdef, re.M).group(1)
 
+    postsync_warnings = ""
+
     # update clientspec
     workspace_config_filename = os.path.join(root, p4config)
     if (workspace_exists or args.create) and os.path.exists(workspace_config_filename):
@@ -224,11 +226,13 @@ def sync(args):
             clientspec_path = m.group(1)
             if clientspec_path.startswith('//'):
                 # check if this file is mapped to clientview and locally modified, and use local modifications instead
-                output = subprocess.check_output("p4 have {0}".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
-                m = re.search(r'''^//[^\s]+ - (.*)$''', output, re.M)
+                output = subprocess.check_output("p4 diff -sl {0} 2>/dev/null".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
+                m = re.search(r'''^diff (.*)$''', output, re.M)
                 if m:
                     clientspec_path = m.group(1)
-                    print("Clientspec is mapped to this view, using it instead: {0}".format(clientspec_path))
+                    warning = "*** NOTICE: Clientspec is locally modified! Using local file instead: {0}".format(clientspec_path)
+                    print(warning)
+                    postsync_warnings += warning + "\n"
                     clientspec_contents = open(m.group(1), "r").read()
                 else:
                     print("Fetching clientspec from depot: {0}".format(clientspec_path))
@@ -262,7 +266,9 @@ def sync(args):
         raise SystemExit(1)
 
     # then simply run `p4 sync`
-    os.system("p4 sync" + (" -f" if args.forced else ""))
+    exitcode = os.system("p4 sync" + (" -f" if args.forced else ""))
+    if (0 == exitcode) and postsync_warnings:
+        print(postsync_warnings, end='')
 
 import argparse
 parser = argparse.ArgumentParser()
