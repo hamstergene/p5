@@ -64,7 +64,8 @@ def inspect(args):
     print("Searching unchanged files...", file=sys.stderr)
     output = subprocess.check_output("p4 diff -sr", shell=True).decode(errors='replace')
     for path in output.splitlines():
-        statuses[path] = kStatusUnchanged
+        if path not in statuses:
+            statuses[path] = kStatusUnchanged
     
     print("Finding untracked (new) files...", file=sys.stderr)
     output = subprocess.check_output(r'''find "%s" -type f''' % root, shell=True, universal_newlines=True)
