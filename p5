@@ -38,7 +38,7 @@ if not p4config:
 
 def inspect(args):
     if not check_workspace():
-        print("No workspace found. You must first create it manually or with `p5 sync -f`.", file=sys.stderr)
+        print("No workspace found. You must first create it manually or with `p5 up -c`.", file=sys.stderr)
         raise SystemExit(1)
 
     import re, os.path, fnmatch
@@ -209,7 +209,7 @@ def diff(args):
 def sync(args):
     workspace_exists = check_workspace()
     if (not args.create) and (not workspace_exists):
-        print("No workspace here. Run with `-f` if you want to auto create it.", file=sys.stderr)
+        print("No workspace here. Run with `-c` if you want to auto create it.", file=sys.stderr)
         raise SystemExit(1)
 
     import re, os.path, fnmatch
