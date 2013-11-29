@@ -56,6 +56,9 @@ def inspect(args):
     output = subprocess.check_output("p4 diff -sl", shell=True).decode(errors='replace')
     for match in re.finditer(r'''^(\w+)\s+(.*)''', output, re.M):
         status, path = match.groups()
+        # files returned by previous `p4 opened` check are ignored
+        if (path in statuses):
+            continue
         # files that are already oped for deletion will be 'missing' here
         if (status == kStatusMissing) and (path in statuses):
             status = kStatusDelete
@@ -237,6 +240,16 @@ def sync(args):
                         print(warning)
                         postsync_warnings += warning + "\n"
                         clientspec_contents = open(m.group(1), "r").read()
+                        must_fetch = False
+                
+                    output = subprocess.check_output("p4 diff -sa {0} 2>/dev/null".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
+                    output = output.rstrip("\n")
+                    if output:
+                        clientspec_path = output
+                        warning = "*** NOTICE: Clientspec is opened for edit! Using local file instead: {0}".format(clientspec_path)
+                        print(warning)
+                        postsync_warnings += warning + "\n"
+                        clientspec_contents = open(clientspec_path, "r").read()
                         must_fetch = False
                 
                 if must_fetch:
