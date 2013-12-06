@@ -266,7 +266,7 @@ def sync(args):
 
             # recreate client
             new_clientspec = viewdef
-            new_clientspec = re.sub(r'''^(Options:\s+)(.*)$''', r'''\1allwrite noclobber compress unlocked modtime rmdir''', new_clientspec, flags=re.M)
+            new_clientspec = re.sub(r'''^(Options:\s+)(.*)$''', r'''\1allwrite noclobber compress unlocked nomodtime rmdir''', new_clientspec, flags=re.M)
             new_clientspec = re.sub(r'''^(.*\nView:\s*\n).*$''', r'''\1''' + clientspec_contents, new_clientspec, flags=re.DOTALL)
             proc = subprocess.Popen("p4 client -i", stdin=subprocess.PIPE, shell=True, universal_newlines=True)
             proc.communicate(input=new_clientspec)
