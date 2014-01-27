@@ -119,6 +119,8 @@ def inspect(args):
         destination_list.append((status, command, path))
     return (edit_part, revert_part, opened_part)
 
+
+
 def status(args):
     edit_part, revert_part, opened_part = inspect(args)
 
@@ -128,6 +130,8 @@ def status(args):
         print("{0:>12} {1}".format(status, path))
     for status, _, path in opened_part:
         print("{0:>12} {1}".format(status, path))
+
+
 
 def reconcile(args):
     editor = os.getenv("EDITOR")
@@ -200,6 +204,8 @@ def reconcile(args):
             for status, _, path in opened_part:
                 print("{0:>12} {1}".format(status, path))
 
+
+
 def diff(args):
     edit_part, revert_part, opened_part = inspect(args)
 
@@ -208,6 +214,8 @@ def diff(args):
     pager_cmd = os.getenv('PFS_PAGER') or os.getenv('PAGER') or '/usr/bin/less -R'
     sh = subprocess.Popen("p4 -x - diff -f | %s" % pager_cmd, shell=True, stdin=subprocess.PIPE)
     sh.communicate(paths)
+
+
 
 def sync(args):
     workspace_exists = check_workspace()
@@ -267,7 +275,8 @@ def sync(args):
             # recreate client
             new_clientspec = viewdef
             new_clientspec = re.sub(r'''^(Options:\s+)(.*)$''', r'''\1allwrite noclobber compress unlocked nomodtime rmdir''', new_clientspec, flags=re.M)
-            new_clientspec = re.sub(r'''^(.*\nView:\s*\n).*$''', r'''\1''' + clientspec_contents, new_clientspec, flags=re.DOTALL)
+            new_clientspec = re.sub(r'''^View:\s*\n.*''', "", new_clientspec, flags=re.DOTALL|re.M)
+            new_clientspec += "\nView:\n" + clientspec_contents
             proc = subprocess.Popen("p4 client -i", stdin=subprocess.PIPE, shell=True, universal_newlines=True)
             proc.communicate(input=new_clientspec)
             if proc.returncode != 0:
@@ -285,23 +294,31 @@ def sync(args):
     if (0 == exitcode) and postsync_warnings:
         print(postsync_warnings, end='')
 
+
+
 import argparse
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", help="Commands")
+
 st_parser = subparsers.add_parser("status", aliases=["st"], help="Shows status of workspace files (changed, missing, etc)")
 st_parser.set_defaults(func=status)
+
 re_parser = subparsers.add_parser("reconcile", aliases=['re'], help="Interactively reconcile changes.")
 re_parser.set_defaults(func=reconcile)
+
 di_parser = subparsers.add_parser("diff", aliases=['di'], help="Show diff, including unopened files.")
 di_parser.set_defaults(func=diff)
+
 sync_parser = subparsers.add_parser("update", aliases=['up'], help="Fetches the latest clientspec, updates client view, runs `p4 sync`. May create workspace if needed.")
 sync_parser.add_argument("--force", "-f", dest="forced", action="store_true", help="Pass `-f` to `p4 sync`")
-sync_parser.add_argument("--create", "-c", dest="create", action="store_true", help="Create workspace if it does not exist")
+###sync_parser.add_argument("--changelist", "-c", dest="changelist", help="Changelist number to use")
+sync_parser.add_argument("--new", "-n", dest="create", action="store_true", help="Create workspace if it does not exist")
 sync_parser.set_defaults(func=sync)
+
 args = parser.parse_args()
 
 if hasattr(args, 'func'):
     args.func(args)
 else:
-    parser.print_usage()
+    parser.print_help()
 
