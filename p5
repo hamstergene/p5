@@ -220,7 +220,7 @@ def diff(args):
 def sync(args):
     workspace_exists = check_workspace()
     if (not args.create) and (not workspace_exists):
-        print("No workspace here. Run with `-c` if you want to auto create it.", file=sys.stderr)
+        print("No workspace here. Run with `-n` if you want to auto create it.", file=sys.stderr)
         raise SystemExit(1)
 
     import re, os.path, fnmatch
