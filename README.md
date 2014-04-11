@@ -38,13 +38,13 @@ Updates workspace if necessary, then runs `p4 sync`.
     usage: p5 update [-h] [--force] [--create]
 
     optional arguments:
-      -h, --help    show this help message and exit
-      --force, -f   Pass `-f` to `p4 sync`
-      --create, -c  Create workspace if it does not exist
+      -h, --help   show this help message and exit
+      --force, -f  Pass `-f` to `p4 sync`
+      --new, -n    Create workspace if it does not exist
 
 If there is `P5CLIENTSPEC` variable in the `.perforce` file, pointing to a depot file or a local file, fetches contents of that file, replaces whatever client name with current workspace name in every line like `//depot/path/... //ClientName/path/...`, and rewrites your current client view.
 
-With `-c` flag, forces creation of workspace associated with current folder using the name defined by `.perforce`. Note: the file must exist, `P4CLIENT` environment variable will not be used for this operation.
+With `-n` flag, enables creation of new workspace associated with current folder using the name defined by `.perforce`. Note: the file must exist, `P4CLIENT` environment variable will not be used for this operation.
 
 In either case, this command runs `p4 sync`. The `-f` flag is passed down to `p4 sync`.
 
@@ -74,7 +74,7 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 * If pattern does not contain '/', it matches filename only.
 * If pattern has '/', it matches paths, relative to the workspace root.
 * Patterns are matched using `fnmatch` (supports `*` wildcards).
-* `.p4ignore` file itself is not ignored by default. You may want to add it there if don't keep it under version control.
+* `.p4ignore` file itself is not ignored by default. You should add it there youself when you are not going to keep it under version control.
 
 ## Misc
 
@@ -86,3 +86,4 @@ I also recommend using this in your `.profile` for improved `p4 diff`/`p5 diff` 
 
     export P4DIFF='git --no-pager diff --color'
     export PAGER='less -R'
+
