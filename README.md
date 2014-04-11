@@ -80,7 +80,7 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 
 This program depends on `python3` and `p4` (replace `brew` with your package manager if needed):
 
-    brew install python3 p4
+    brew install python3 perforce
 
 I also recommend using this in your `.profile` for improved `p4 diff`/`p5 diff` experience:
 
