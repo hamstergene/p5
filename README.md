@@ -21,7 +21,7 @@ This script provides a few commands I miss from Perforce command-line utilities.
 
 ### `p5 reconcile`
 
-Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`. Works much, *much*, **much** faster than P4V's one.
+Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`. Works much, *much*, **much** faster than P4V's one. It is also much more comfortable to use than builtin `p4 reconcile`, and is available even with old Perforce servers.
 
 ### `p5 status`
 
@@ -56,7 +56,9 @@ This script assumes that `p4` command line tool is already configured and works 
     export P4USER=MyUsername
     export P4CONFIG=.perforce
 
-then restart terminal or relogin, and create `.perforce` files in root of each workspace with the following line:
+**The last line `export P4CONFIG=.perforce` is the most essential**. For some reason, `p4` assumes no default value for it.
+
+Restart terminal or relogin, and create `.perforce` files in root of each workspace with the following line:
 
     P4CLIENT=current-workspace-name
 
@@ -64,7 +66,7 @@ then restart terminal or relogin, and create `.perforce` files in root of each w
     # P5CLIENTSPEC=//depot/path/to/client_view_definition.txt
     # P5CLIENTSPEC=/path/to/client_view_definition.txt
 
-Then do `p4 login` and check whether it works by doing something like `p4 opened` from a workspace folder. Seeing a list of opened files, or “File(s) not opened on this client.” message means everything is OK now. `p5` works wherever `p4` works.
+Then do `p4 login` and check whether workspace name has been detected correctly by running `p4 info` from the workspace folder.
 
 ## Ignoring files with `.p4ignore`
 
@@ -78,7 +80,7 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 
 ## Misc
 
-This program depends on `python3` and `p4` (replace `brew` with your package manager if needed):
+This program depends on `python3` and `perforce` packages (replace `brew` with your package manager if using another one):
 
     brew install python3 perforce
 
