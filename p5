@@ -48,9 +48,11 @@ def inspect(args):
     statuses = {}
     
     print("Checking opened files...", file=sys.stderr)
-    output = subprocess.check_output(r"""p4 opened | sed -e 's/^\(.*\)#.*/\1/' | xargs p4 where | awk '//{print$3;}'""", shell=True).decode(errors='replace')
+    output = subprocess.check_output(r"""p4 -ztag opened | grep '^\.\.\. depotFile' | sed 's/^\.\.\. depotFile//' | xargs -I {} p4 -ztag where {}""", shell=True).decode(errors='replace')
+    tag = '... path '
     for path in output.splitlines():
-        statuses[p4unescape(path)] = kStatusOpen
+        if path.startswith(tag):
+            statuses[p4unescape(path[len(tag):])] = kStatusOpen
     
     print("Checking unopened tracked files...", file=sys.stderr)
     output = subprocess.check_output("p4 diff -sl", shell=True).decode(errors='replace')
