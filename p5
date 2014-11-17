@@ -317,6 +317,7 @@ sync_parser.add_argument("--force", "-f", dest="forced", action="store_true", he
 sync_parser.add_argument("--new", "-n", dest="create", action="store_true", help="Create workspace if it does not exist")
 sync_parser.set_defaults(func=sync)
 
+parser.add_argument("--version", action="version", version="%(prog)s 0.5")
 args = parser.parse_args()
 
 if hasattr(args, 'func'):
