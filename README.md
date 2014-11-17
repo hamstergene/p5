@@ -50,9 +50,10 @@ In either case, this command runs `p4 sync`. The `-f` flag is passed down to `p4
 
 ## Installation/Configuration
 
-There is Homebrew formula for easy installation on OS X:
+There is Homebrew formula for easy installation/upgrade on OS X:
 
-    brew install --HEAD https://raw.githubusercontent.com/hamstergene/p5/master/homebrew/p5.rb
+    brew install https://raw.githubusercontent.com/hamstergene/p5/master/homebrew/p5.rb
+    brew upgrade https://raw.githubusercontent.com/hamstergene/p5/master/homebrew/p5.rb
 
 If you are not using Homebrew or not on OS X, you can clone git repository and symlink `p5` where you need it - this is one-file utility. This script depends on `python3` and `perforce` packages. The Homebrew formula from above will automatically install them as dependencies; if you're installing manually, make sure `python3` and `p4` command are available in `PATH`.
 
