@@ -50,6 +50,12 @@ In either case, this command runs `p4 sync`. The `-f` flag is passed down to `p4
 
 ## Installation/Configuration
 
+There is head-only Homebrew formula for easy installation on OS X:
+
+    brew install --HEAD https://raw.githubusercontent.com/hamstergene/p5/master/homebrew/p5.rb
+
+Alternatively, you can clone git repository and symlink `p5` where you need it - this is one-file utility. This script depends on `python3` and `perforce` packages. The Homebrew formula from above will automatically install them as dependencies; if you're installing manually, make sure `python3` and `p4` command are available in `PATH`.
+
 This script assumes that `p4` command line tool is already configured and works from current folder. If it's not, you need to add something like this to your `~/.profile`:
 
     export P4PORT=perforce.mycompany.com:1666
@@ -79,10 +85,6 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 * `.p4ignore` file itself is not ignored by default. You should add it there youself when you are not going to keep it under version control.
 
 ## Misc
-
-This program depends on `python3` and `perforce` packages (replace `brew` with your package manager if using another one):
-
-    brew install python3 perforce
 
 I also recommend using this in your `.profile` for improved `p4 diff`/`p5 diff` experience:
 
