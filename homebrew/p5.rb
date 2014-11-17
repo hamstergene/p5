@@ -1,6 +1,6 @@
 require "formula"
 
-class P5BrewFormula < Formula
+class P5 < Formula
   homepage "https://github.com/hamstergene/p5"
   head "https://github.com/hamstergene/p5.git"
 
