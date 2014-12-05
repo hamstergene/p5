@@ -131,7 +131,7 @@ def inspect(args):
 
         command = command_from_status[status]
         destination_list = destination_from_status[status]
-        destination_list.append((status, command, path))
+        destination_list.append((status, command, os.path.relpath(path)))
     return (edit_part, revert_part, opened_part)
 
 
