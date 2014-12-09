@@ -81,7 +81,8 @@ If the workspace root contains `.p4ignore` file, it will be used. The format is 
 
 * One pattern per line.
 * If pattern does not contain '/', it matches filename only.
-* If pattern has '/', it matches paths, relative to the workspace root.
+* If pattern starts with '/', it matches absolute paths
+* If the pattern has a '/' but not at the beginning, it matches anywhere in the checkout, so 'generated/' would match foo/generated/ as well as 3rdParth/extras/generaged/
 * Patterns are matched using `fnmatch` (supports `*` wildcards).
 * `.p4ignore` file itself is not ignored by default. You should add it there youself when you are not going to keep it under version control.
 

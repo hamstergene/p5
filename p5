@@ -87,16 +87,29 @@ def inspect(args):
         if statuses[path] == kStatusSame:
             return True
         basename = os.path.basename(path)
-        relpath = os.path.relpath(path, root)
+        dirname = os.path.dirname(path) + os.sep
+        relpath = os.path.relpath(path, root) 
         for patt in ignores:
+            patHasSep = os.sep in patt
             # shortcut for speed
             if (basename == patt) or (relpath == patt):
                 return True
             # with '/', path is matched, otherwise, filename only
-            if fnmatch.fnmatch( (relpath if ('/' in patt) else basename), patt):
+            if fnmatch.fnmatch( (relpath if (patHasSep) else basename), patt):
                 return True
+            # is our pattern an unrooted directory pattern?
+            # or unrooted dir with path wildcard: i.e. dir/file*.txt
+            if (patHasSep and not patt.startswith(os.sep)):
+                if (patt.endswith(os.sep)):
+                    if ((relpath.startswith(patt) or patt in dirname)):
+                        return True
+                else:
+                    patDir = os.path.dirname(patt) + os.sep
+                    patFile = os.path.basename(patt)
+                    if (dirname.endswith(patDir) and fnmatch.fnmatch(basename, patFile)):
+                        return True
             # exact full path patterns start with /
-            if (patt[0] == '/') and fnmatch.fnmatch(relpath, patt[1:]):
+            if (patt[0] == os.sep) and fnmatch.fnmatch(relpath, patt[1:]):
                 return True
         return False
 
@@ -118,7 +131,7 @@ def inspect(args):
 
         command = command_from_status[status]
         destination_list = destination_from_status[status]
-        destination_list.append((status, command, path))
+        destination_list.append((status, command, os.path.relpath(path)))
     return (edit_part, revert_part, opened_part)
 
 
