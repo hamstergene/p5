@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-from __future__ import print_function
+#!/usr/bin/env python3
 
 kStatusOpen = "open"
 kStatusNew = "new"
@@ -36,6 +35,55 @@ def check_workspace():
 p4config = os.environ.get('P4CONFIG')
 if not p4config:
     p4config = '.perforce'
+
+def clone(args):
+    import re, os.path, fnmatch
+    if check_workspace():
+        output = subprocess.check_output("p4 client -o", shell=True, universal_newlines=True)
+        client = re.search(r'''^Client:\s+(.*)''', output, re.M).group(1)
+        print("Can not proceed: there is already a workspace in the current directory (%s)." % client, file=sys.stderr)
+        raise SystemExit(1)
+
+    workspace_name = None
+    must_save_workspace_name = False
+    clientspec_path = None
+    must_save_clientspec_path = False
+    user_name = None
+    workspace_config_filename = os.path.join(root, p4config)
+    if os.path.exists(workspace_config_filename):
+        workspace_config = open(workspace_config_filename, "r").read()
+        m = re.search(r'''^\s*P4CLIENT\s*=\s*(.*)\s*$''', workspace_config, re.M)
+        if m:
+            workspace_name = m.group(1)
+            if args.workspace:
+                if args.workspace != workspace_name:
+                    print("`P4CLIENT` value from %s conflicts with --workspace." % p4config, file=sys.stderr)
+                    raise SystemExit(1)
+            else:
+                must_save_workspace_name = True
+        m = re.search(r'''^\s*P5CLIENTSPEC\s*=\s*(.*)\s*$''', workspace_config, re.M)
+        if m:
+            clientspec_path = m.group(1)
+            if args.clientspec:
+                if args.clientspec != clientspec_path:
+                    print("`P5CLIENTSPEC` value from %s conflicts with --clientspec." % p4config, file=sys.stderr)
+                    raise SystemExit(1)
+            else:
+                must_save_clientspec_path = True
+        m = re.search(r'''^\s*P4USER\s*=\s*(.*)\s*$''', workspace_config, re.M)
+        if m:
+            user_name = m.group(1)
+    if not workspace_name:
+        if not user_name:
+            user_name = os.getenv('P4USER')
+            if not user_name:
+                # TODO: use p4 info output
+                print("Can not determine P4 user name", file=sys.stderr)
+                raise SystemExit(1)
+        workspace_name = user_name + '-' + os.path.basename(os.path.abspath(os.getcwd()))
+        # p4clients...
+    if clientspec_path.startswith('//'):
+    raise SystemExit(2)
 
 def inspect(args):
     if not check_workspace():
@@ -151,24 +199,8 @@ def status(args):
 
 def reconcile(args):
     editor = os.getenv("EDITOR")
-    if not editor:
-        warn_about_vi = True
-        editor = "vi"
-    else:
-        warn_about_vi = False
 
     edit_part, revert_part, opened_part = inspect(args)
-
-    def warn(f):
-        nonlocal warn_about_vi
-        if warn_about_vi:
-            print("""
-# You are running `vi` because EDITOR environment variable is not set.
-# To save and exit, type `:wq<Enter>`. To delete the line under the cursor, type `dd`.
-# Select multiple lines with `V` then delete selection with `d` or cancel it with `Esc`. To undo, type `u`.
-# To exit without saving, type `:q!`
-""", end='', file=f)
-            warn_about_vi = False
 
     if edit_part or revert_part:
         tempy_path = "/tmp/{0}_pfs_reconcile.txt".format(os.getenv("USER"))
@@ -179,7 +211,15 @@ def reconcile(args):
 # Save and exit to perform these commands. Edit to remove unwanted commands.
 # Quit without saving to cancel.
 """, end='', file=tempy)
-        warn(tempy)
+
+    if not editor:
+        editor = "vi"
+        print("""
+# You are running `vi` because EDITOR environment variable is not set.
+# To save and exit, type `:wq<Enter>`. To delete the line under the cursor, type `dd`.
+# Select multiple lines with `V` then delete selection with `d` or cancel it with `Esc`. To undo, type `u`.
+# To exit without saving, type `:q!`
+""", end='', file=tempy)
 
         if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
         for _, command, path in edit_part:
@@ -234,9 +274,8 @@ def diff(args):
 
 
 def sync(args):
-    workspace_exists = check_workspace()
-    if (not args.create) and (not workspace_exists):
-        print("No workspace here. Run with `-n` if you want to auto create it.", file=sys.stderr)
+    if not check_workspace():
+        print("No workspace found in the current directory.", file=sys.stderr)
         raise SystemExit(1)
 
     import re, os.path, fnmatch
@@ -248,7 +287,7 @@ def sync(args):
 
     # update clientspec
     workspace_config_filename = os.path.join(root, p4config)
-    if (workspace_exists or args.create) and os.path.exists(workspace_config_filename):
+    if os.path.exists(workspace_config_filename):
         m = re.search(r'''P5CLIENTSPEC\s*=\s*(.*)\s*$''', open(workspace_config_filename, "r").read(), re.M)
         if m:
             clientspec_path = m.group(1)
@@ -316,22 +355,38 @@ import argparse
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-st_parser = subparsers.add_parser("status", aliases=["st"], help="Shows status of workspace files (changed, missing, etc)")
+def add_changelist_argugment(parser):
+    parser.add_argument("-c", "--changelist", help="Sync to this changelist number. Defaults to the most recent changelist.")
+
+cl_parser = subparsers.add_parser("clone",
+        help="Create workspace and fetch files.", epilog="If target workspace already exists, this operation fails. Use `p4 client -d` to delete workspaces you don't need.")
+cl_parser.add_argument("-w", "--workspace", type=str,
+        help="Set client workspace name. Defaults to `${P4USER}-$(basename $PWD)` (for example, is user name is `john_d` and current directory is `~/Documents/NewProj`, the default workspace name is `john_d-NewProj`). Causes P4CLIENT variable to be written into `.perforce` file in workspace root. If this option is present and that file already provides P4CLIENT, this operation will fail.")
+cl_parser.add_argument("-s", "--clientspec", type=str,
+        help="Set depot path to client workspace mappings file. Causes P5CLIENTSPEC variable to be written into `.perforce` file in workspace root. If this option is present and that file already provides P5CLIENTSPEC, this operation will fail; otherwise, this option is required.")
+add_changelist_argugment(cl_parser)
+cl_parser.set_defaults(func=clone)
+
+st_parser = subparsers.add_parser("status", aliases=["st"],
+        help="Shows local changes, including unopened files that were changed/added/removed.")
 st_parser.set_defaults(func=status)
 
-re_parser = subparsers.add_parser("reconcile", aliases=['re'], help="Interactively reconcile changes.")
+re_parser = subparsers.add_parser("reconcile", aliases=['re'],
+        help="Interactive reconcile.", epilog="Works even with old perforce server that do not support `p4 reconcile`.")
 re_parser.set_defaults(func=reconcile)
 
-di_parser = subparsers.add_parser("diff", aliases=['di'], help="Show diff, including unopened files.")
+di_parser = subparsers.add_parser("diff", aliases=['di'],
+        help="Show diff, including unopened files.")
 di_parser.set_defaults(func=diff)
 
-sync_parser = subparsers.add_parser("update", aliases=['up'], help="Fetches the latest clientspec, updates client view, runs `p4 sync`. May create workspace if needed.")
-sync_parser.add_argument("--force", "-f", dest="forced", action="store_true", help="Pass `-f` to `p4 sync`")
-###sync_parser.add_argument("--changelist", "-c", dest="changelist", help="Changelist number to use")
-sync_parser.add_argument("--new", "-n", dest="create", action="store_true", help="Create workspace if it does not exist")
+sync_parser = subparsers.add_parser("update", aliases=['up'],
+        help="Fetches the latest clientspec, updates client view, runs `p4 sync`. May create workspace if needed.")
+sync_parser.add_argument("--force", "-f", dest="forced", action="store_true",
+        help="Pass `-f` to `p4 sync`")
+add_changelist_argugment(sync_parser)
 sync_parser.set_defaults(func=sync)
 
-parser.add_argument("--version", action="version", version="%(prog)s 0.5")
+parser.add_argument("--version", action="version", version="%(prog)s 0.6")
 args = parser.parse_args()
 
 if hasattr(args, 'func'):
