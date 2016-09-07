@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+import imp, os, os.path, subprocess, sys, textwrap, unittest
+
+def p5main(*args):
+    try:
+        p5.main(["p5"] + list(args))
+        return 0
+    except SystemExit as exc:
+        return exc.code
+
+def p5setenv(self, key, func):
+    self.assertIn(key, dir(p5.P5Env()))
+    p5.env.__setattr__(key, func)
+
+unittest.TestCase.p5setenv = p5setenv
+
+class RedirectedStderr:
+    def __enter__(self):
+        self.original_stderr = sys.stderr
+        sys.stderr = open(os.devnull, "w")
+    def __exit__(self, type, value, traceback):
+        sys.stderr.close()
+        sys.stderr = self.original_stderr
+
+
+class Test_1_Funcs(unittest.TestCase):
+    def test_parse_ztag(self):
+        single_item = p5.parse_ztag(textwrap.dedent("""\
+            ... aaa12 foo bar
+            ... bbb34 baz
+
+            """))
+        self.assertEqual(1, len(single_item))
+        self.assertDictEqual( { "aaa12" : "foo bar", "bbb34" : "baz" }, single_item[0] )
+        self.assertListEqual( [ {"a":"aa","b":"bb"}, {"c":"ccc"} ], p5.parse_ztag(textwrap.dedent("""\
+            ... a aa
+            ... b bb
+
+
+            ... c ccc
+
+
+            """)) )
+
+    def test_parse_config(self):
+        self.assertDictEqual( { "P4FOO" : "bar", "p5bar" : "baz baz baz" }, p5.parse_config(textwrap.dedent("""\
+            # comment
+                P4FOO=bar
+
+                # comment
+                p5bar = baz baz baz
+            """)) )
+
+
+class Test_2_Clone(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        print()
+        p5main("clone", "-h")
+        print('-'*70)
+
+    def setUp(self):
+        p5.env = MockEnv()
+        self.p5setenv("p4info", lambda: { "clientName" : "*unknown*", "userName" : "DerUser" })
+        self.p5setenv("p4config", lambda: {})
+        self.p5setenv("p4clients", lambda: [])
+        self.p5setenv("getcwd", lambda: "/nonexistent/folder/DerProject")
+
+    def test_missing_p4(self):
+        p5.env.p4_path = "nonexistent"
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/irrelevant.txt"))
+
+    def test_workspace_already_exists(self):
+        p5.env.p4info = lambda: { "clientName" : "an_actual_name" }
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/irrelevant.txt"))
+
+    def test_workspace_name_argument(self):
+        #
+        # just -c (ok)
+        self.assertEqual(0, p5main("clone", "-c", "Workspace_Name", "//depot/path/clientspec.txt"))
+        #
+        # just P4CLIENT (ok)
+        self.p5setenv("p4config", lambda: { "P4CLIENT" : "Workspace_Name" })
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+        #
+        # -c and P4CLIENT, same name (ok)
+        self.assertEqual(0, p5main("clone", "-c", "Workspace_Name", "//depot/path/clientspec.txt"))
+        #
+        # -c and P4CLIENT, conflict (error)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "-c", "Different_Workspace_Name", "//depot/path/clientspec.txt"))
+        #
+        # neither, workspace does not exist (ok)
+        self.p5setenv("p4config", lambda: {})
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+        #
+        # neither, workspace exists (error)
+        self.p5setenv("p4clients", lambda: [ { "client" : "DerUser-DerProject" } ])
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+
+    def test_clientspec_path_argument(self):
+        #
+        # just argument (ok)
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+        #
+        # just P5CLIENTSPEC (ok)
+        self.p5setenv("p4config", lambda: { p5.kp5clientspec : "//depot/path/clientspec.txt" })
+        self.assertEqual(0, p5main("clone"))
+        #
+        # both, same value (ok)
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+        #
+        # both, different values (error)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/different/path/mappings.txt"))
+
+    def test_get_clientspec_file(self):
+        def mocked_p4print(depot_path, changelist=None):
+            if ("nonexistent" in depot_path) or (changelist and (changelist < "@5000")):
+                return None
+            return ""
+        self.p5setenv("p4print", mocked_p4print)
+        self.p5setenv("file_exists", lambda path: "nonexistent" not in path)
+        def mocked_readfile(path):
+            if path == "/tmp":
+                raise IOError(5, "/tmp")
+            return ""
+        self.p5setenv("readfile", mocked_readfile)
+        #
+        # depot file (ok)
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt"))
+        #
+        # depot file with changelist (ok)
+        self.assertEqual(0, p5main("clone", "//depot/path/clientspec.txt", "@5555"))
+        #
+        # nonexisting depot file (err)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/nonexistent"))
+        #
+        # depot file with nonexisting changelist (err)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "//depot/path/clientspec.txt", "@1"))
+        #
+        # local file (ok)
+        self.assertEqual(0, p5main("clone", "/home/user/my_clientspec.txt"))
+        #
+        # nonexisting local file (error)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "nonexistent"))
+        #
+        # unreadable local file (error)
+        with RedirectedStderr():
+            self.assertNotEqual(0, p5main("clone", "/tmp"))
+
+if __name__ == '__main__':
+    p5_path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "../p5"))
+    assert os.path.isfile(p5_path) and os.access(p5_path, os.X_OK), "can not find p5 executable (expected at: {p5_path})".format(**vars())
+    p5 = imp.load_module("p5", open(p5_path, "r"), "../p5", ("", "r", imp.PY_SOURCE))
+    class MockEnv(p5.P5Env):
+        def __init__(self):
+            super().__init__()
+            # causes any operation that relies on p4 to actually do something to fail
+            self.p4_path = "/usr/bin/true"
+    unittest.main()
+
