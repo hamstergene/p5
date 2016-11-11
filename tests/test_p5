@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+import imp, os, os.path, subprocess, sys, textwrap, unittest
+
+# class RedirectedStderr:
+#     def __enter__(self):
+#         self.original_stderr = sys.stderr
+#         sys.stderr = open(os.devnull, "w")
+#     def __exit__(self, type, value, traceback):
+#         sys.stderr.close()
+#         sys.stderr = self.original_stderr
+
+# with RedirectedStderr():
+#     dosmth()
+
+class p5units(unittest.TestCase):
+    def test_parse_ztag(self):
+        single_item = p5.parse_ztag(textwrap.dedent("""\
+            ... aaa12 foo bar
+            ... bbb34 baz
+
+            """))
+        self.assertEqual(1, len(single_item))
+        self.assertDictEqual( { "aaa12" : "foo bar", "bbb34" : "baz" }, single_item[0] )
+        self.assertListEqual( [ {"a":"aa","b":"bb"}, {"c":"ccc"} ], p5.parse_ztag(textwrap.dedent("""\
+            ... a aa
+            ... b bb
+
+
+            ... c ccc
+
+
+            """)) )
+
+    def test_parse_config(self):
+        self.assertDictEqual( { "P4FOO" : "bar", "p5bar" : "baz baz baz" }, p5.parse_config(textwrap.dedent("""\
+            # comment
+                P4FOO=bar
+
+                # comment
+                p5bar = baz baz baz
+            """)) )
+
+    def test_is_ignored_simple_patterns(self):
+        # just filename pattern -- ignores files anywhere in the tree (e.g. '.DS_Store', '*.bak')
+        ignores = [
+            "just_filename.txt",
+            "*.bak",
+            ".*",
+        ]
+        self.assertTrue(p5.is_ignored("/just_filename.txt", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/just_filename.txt", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/subsubdir/just_filename.txt", ignores))
+        self.assertFalse(p5.is_ignored("/just_filename", ignores))
+        self.assertFalse(p5.is_ignored("/just.txt", ignores))
+
+        self.assertTrue(p5.is_ignored("/foobar.bak", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/foobar.bak", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/subsubdir/foobar.bak", ignores))
+        self.assertFalse(p5.is_ignored("/foobar", ignores))
+        self.assertFalse(p5.is_ignored("/bak", ignores))
+
+        self.assertTrue(p5.is_ignored("/.DS_Store", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/.DS_Store", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/subsubdir/.DS_Store", ignores))
+        self.assertFalse(p5.is_ignored("/DS_Store", ignores))
+
+    def test_is_ignored_path(self):
+        # if pattern starts with '/', matches paths
+        ignores = [
+            "/just_filename.txt",
+            "/ignored_backups/*.bak",
+            "*/debug/*",
+        ]
+        self.assertTrue(p5.is_ignored("/just_filename.txt", ignores))
+        self.assertFalse(p5.is_ignored("/subdir/just_filename.txt", ignores))
+        self.assertFalse(p5.is_ignored("/subdir/subsubdir/just_filename.txt", ignores))
+
+        self.assertTrue(p5.is_ignored("/ignored_backups/foobar.bak", ignores))
+        self.assertFalse(p5.is_ignored("/subdir/foobar.bak", ignores))
+        self.assertFalse(p5.is_ignored("/subdir/ignored_backups/foobar.bak", ignores))
+
+        self.assertTrue(p5.is_ignored("/foo/bar/debug/baz.txt", ignores))
+        self.assertTrue(p5.is_ignored("/debug/qux.txt", ignores))
+        self.assertTrue(p5.is_ignored("/debug/debug", ignores))
+        self.assertFalse(p5.is_ignored("/debug", ignores))
+
+    def test_is_ignored_dirs(self):
+        # if pattern ends with '/', matches anything under that directory
+        ignores = [
+            "/bar/ignoreme/",
+        ]
+        self.assertTrue(p5.is_ignored("/bar/ignoreme/foo.txt", ignores))
+        self.assertTrue(p5.is_ignored("/bar/ignoreme/baz/qux.txt", ignores))
+        self.assertFalse(p5.is_ignored("/foo/ignoreme/foo.txt", ignores))
+        self.assertFalse(p5.is_ignored("/bar/ignoreme", ignores))
+
+
+if __name__ == '__main__':
+    p5_path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "../p5"))
+    assert os.path.isfile(p5_path) and os.access(p5_path, os.X_OK), "can not find p5 executable (expected at: {p5_path})".format(**vars())
+    p5 = imp.load_module("p5", open(p5_path, "r"), "../p5", ("", "r", imp.PY_SOURCE))
+    unittest.main()
