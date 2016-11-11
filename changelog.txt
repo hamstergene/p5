@@ -1,0 +1,7 @@
+0.7:
+- added "checkout" command for creating workspace
+- removed creating workspace functionality from "update"
+- "reconcile" provides alternatives: revert edited/deleted, remove added
+- stopped using posix bintools, can now theoretically work on Windows
+- added unit tests
+
