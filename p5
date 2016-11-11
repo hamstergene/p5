@@ -1,142 +1,189 @@
 #!/usr/bin/env python3
+import argparse, fnmatch, os, os.path, re, textwrap, subprocess, sys
 
-kStatusOpen = "open"
-kStatusNew = "new"
-kStatusDelete = "delete"
-kStatusUnchanged = "same/open"
-# these are defined by `p4`, you can't change them
-kStatusMissing = "missing"
-kStatusDiff = "diff"
-kStatusSame = "same"
+def main(argv):
+    parser = argparse.ArgumentParser(prog=os.path.basename(argv[0]))
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-import subprocess, sys, os
+    def add_changelist_argument(parser):
+        def validate_changelist_argument(arg):
+            if re.match(r'''@\d+''', arg):
+                return arg
+            raise RuntimeError("invalid changelist number: %s" % arg)
+        parser.add_argument("changelist", metavar="@changelist", type=validate_changelist_argument, default=None, nargs='?',
+            help="Sync to this changelist number. Defaults to the most recent changelist.")
 
-def shellEscape(p):
-    if set(p).intersection( set(r'''~!@#$%^&*(){}[]"'\|<>? ''') ):
-        return "'" + p.replace("'", "\'\"\'\"\'") + "'"
-    return p
+    def make_argparser_checkout():
+        parser = subparsers.add_parser("checkout", aliases=["co"],
+                help="Create workspace and fetch files.",
+                description="Creates workspace in the current directory from given clientspec mappings file, and syncs.")
+        parser.add_argument("-c", "--client", type=str, metavar="workspace",
+                help="Set P4CLIENT for the new workspace. Defaults to `${P4USER}-$(basename $PWD)` (for example, is user name is `john_d` and current directory is `~/Documents/NewProj`, the default workspace name is `john_d-NewProj`). The value is saved into P4CLIENT variable and will be used by all perforce tools (`p4` and `p5` both).")
+        parser.add_argument("clientspec_path", type=str,
+                help="Depot path or local path to the client workspace mappings file. The value is saved into P5CLIENTSPEC variable and is used later by `update`, `reconcile` and other commands.")
+        add_changelist_argument(parser)
+        parser.set_defaults(func=cmd_checkout)
+    make_argparser_checkout()
 
-def p4escape(path):
-    return path.replace("%","%25").replace("@","%40").replace("#","%23").replace("*","%2A")
+    def make_argparser_status():
+        parser = subparsers.add_parser("status", aliases=["st"],
+            help="Show local changes, including unopened files that were changed/added/removed.",
+            description="Show local changes, including unopened files that were changed/added/removed.")
+        parser.set_defaults(func=cmd_status)
+    make_argparser_status()
 
-def p4unescape(path):
-    return path.replace("%40","@").replace("%23","#").replace("%2A","*").replace("%25","%")
+    def make_argparser_update():
+        parser = subparsers.add_parser("update", aliases=['up'],
+                help="Update client view with the latest clientspec mappings then sync.")
+        parser.add_argument("-f", "--force", dest="force", action="store_true",
+                help="Pass `-f` to `p4 sync`")
+        parser.add_argument("-n", "--dry-run", dest="dry", action="store_true",
+                help="Preview what would be done.")
+        add_changelist_argument(parser)
+        parser.set_defaults(func=cmd_update)
+    make_argparser_update()
 
-def check_workspace():
-    try:
-        output = subprocess.check_output("p4 info", shell=True, universal_newlines=True)
-    except:
-        print("Can not run `p4 info`. Make sure you are logged in (`p4 login`).", file=sys.stderr)
-        raise
-    if "Client unknown." in output:
-        return False
-    return True
+    def make_argparser_reconcile():
+        parser = subparsers.add_parser("reconcile", aliases=['re'],
+            help="Interactive reconcile",
+            description="Generates shell script with `p4 edit/add/delete` command for each changed file. The script is opened in the default $EDITOR; if the editor returns success (0) the script is executed.",
+            epilog="Works even with old perforce server that do not support `p4 reconcile`.")
+        parser.set_defaults(func=cmd_reconcile)
+    make_argparser_reconcile()
 
-p4config = os.environ.get('P4CONFIG')
-if not p4config:
-    p4config = '.perforce'
+    def make_argparser_diff():
+        parser = subparsers.add_parser("diff", aliases=['di'],
+            help="Show diff, including unopened files.")
+        parser.set_defaults(func=cmd_diff)
+    make_argparser_diff()
 
-def inspect(args):
-    if not check_workspace():
-        print("No workspace found. You must first create it manually or with `p5 up -c`.", file=sys.stderr)
+    parser.add_argument("--version", action="version", version="%(prog)s 0.6")
+    args = parser.parse_args(argv[1:])
+
+    if hasattr(args, 'func'):
+        args.func(args)
+    else:
+        parser.print_help()
+
+
+#
+# `p5 init`
+#
+def cmd_checkout(args):
+    verify_p4_present()
+
+    p4info = env.p4info()
+    if "*unknown*" != p4info["clientName"]:
+        print("error: workspace already exists here (see `p4 info`)", file=sys.stderr)
         raise SystemExit(1)
 
-    import re, os.path, fnmatch
-    output = subprocess.check_output("p4 client -o", shell=True, universal_newlines=True)
-    client = re.search(r'''^Client:\s+(.*)''', output, re.M).group(1)
-    root = re.search(r'''^Root:\s+(.*)''', output, re.M).group(1)
-    statuses = {}
-    
-    print("Checking opened files...", file=sys.stderr)
-    output = subprocess.check_output(r"""p4 -ztag opened | grep '^\.\.\. depotFile' | sed 's/^\.\.\. depotFile//' | xargs -I {} p4 -ztag where {}""", shell=True).decode(errors='replace')
-    tag = '... path '
-    for path in output.splitlines():
-        if path.startswith(tag):
-            statuses[p4unescape(path[len(tag):])] = kStatusOpen
-    
-    print("Checking unopened tracked files...", file=sys.stderr)
-    output = subprocess.check_output("p4 diff -sl", shell=True).decode(errors='replace')
-    for match in re.finditer(r'''^(\w+)\s+(.*)''', output, re.M):
-        status, path = match.groups()
-        # files returned by previous `p4 opened` check are ignored
-        if (path in statuses):
-            continue
-        # files that are already oped for deletion will be 'missing' here
-        if (status == kStatusMissing) and (path in statuses):
-            status = kStatusDelete
-        statuses[path] = status
-    
-    print("Searching unchanged files...", file=sys.stderr)
-    output = subprocess.check_output("p4 diff -sr", shell=True).decode(errors='replace')
-    for path in output.splitlines():
-        if path not in statuses:
-            statuses[path] = kStatusUnchanged
-    
-    print("Finding untracked (new) files...", file=sys.stderr)
-    output = subprocess.check_output(r'''find "%s" -type f''' % root, shell=True, universal_newlines=True)
-    for phys in output.splitlines():
-        if phys not in statuses:
-            statuses[phys] = kStatusNew
-    
-    p4ignore = os.path.join(root, ".p4ignore")
-    ignores = list(map(str.strip, open(p4ignore, "r").readlines())) if os.path.exists(p4ignore) else []
-    while "" in ignores: 
-        ignores.remove("")
-    ignores.append("/" + p4config)
-    def is_ignored(path):
-        if statuses[path] == kStatusSame:
-            return True
-        basename = os.path.basename(path)
-        dirname = os.path.dirname(path) + os.sep
-        relpath = os.path.relpath(path, root) 
-        for patt in ignores:
-            patHasSep = os.sep in patt
-            # shortcut for speed
-            if (basename == patt) or (relpath == patt):
-                return True
-            # with '/', path is matched, otherwise, filename only
-            if fnmatch.fnmatch( (relpath if (patHasSep) else basename), patt):
-                return True
-            # is our pattern an unrooted directory pattern?
-            # or unrooted dir with path wildcard: i.e. dir/file*.txt
-            if (patHasSep and not patt.startswith(os.sep)):
-                if (patt.endswith(os.sep)):
-                    if ((relpath.startswith(patt) or patt in dirname)):
-                        return True
-                else:
-                    patDir = os.path.dirname(patt) + os.sep
-                    patFile = os.path.basename(patt)
-                    if (dirname.endswith(patDir) and fnmatch.fnmatch(basename, patFile)):
-                        return True
-            # exact full path patterns start with /
-            if (patt[0] == os.sep) and fnmatch.fnmatch(relpath, patt[1:]):
-                return True
-        return False
+    try:
+        p4config = env.p4config()
+    except FileNotFoundError:
+        p4config = {}
 
-    command_from_status = { kStatusMissing : "delete", kStatusDiff : "edit", kStatusNew : "add", kStatusOpen : None, kStatusDelete : None, kStatusUnchanged : "revert" }
-    edit_part, revert_part, opened_part = [], [], []
-    destination_from_status = { kStatusMissing : edit_part, kStatusDiff : edit_part, kStatusNew : edit_part, kStatusOpen : opened_part, kStatusDelete : opened_part, kStatusUnchanged : revert_part }
-    for path in sorted(statuses.keys()):
-        if is_ignored(path):
-            continue
-        status = statuses[path]
-        
-        # ignore resource forks problem with 'apple' file types
-        # http://theaccidentalreleaseengineer.blogspot.ru/2007/12/perforce-apple-filetype-and-mysterious.html
-        if status == kStatusNew:
-            basename = os.path.basename(path)
-            dirname = os.path.dirname(path)
-            if basename.startswith('%') and (os.path.join(dirname, basename[1:]) in statuses):
-                continue
+    # workspace name
+    #
+    if args.client:
+        if (kp4client in p4config) and args.client != p4config[kp4client]:
+            print("`%s` value '%s' conflicts with command line option '%s'." % (kp4client, p4config[kp4client], args.client), file=sys.stderr)
+            raise SystemExit(1)
+        workspace_name = args.client
+        must_save_workspace_name = (kp4client not in p4config)
+    elif (kp4client in p4config):
+        workspace_name = p4config[kp4client]
+        must_save_workspace_name = False
+    else:
+        workspace_name = p4info["userName"] + "-" + os.path.basename(os.path.abspath(env.getcwd()))
+        must_save_workspace_name = True
+        for clientProps in env.p4clients():
+            if clientProps["client"] == workspace_name:
+                print("error: workspace '{workspace_name}' already exists".format(**vars()), file=sys.stderr)
+                raise SystemExit(1)
 
-        command = command_from_status[status]
-        destination_list = destination_from_status[status]
-        destination_list.append((status, command, os.path.relpath(path)))
-    return (edit_part, revert_part, opened_part)
+    # path to clientspec file
+    #
+    assert args.clientspec_path
+    if (kp5clientspec in p4config) and args.clientspec_path != p4config[kp5clientspec]:
+        print("`%s` is already written into .perforce config and has different value (%s)." % (kp5clientspec, p4config[kp5clientspec]), file=sys.stderr)
+        raise SystemExit(1)
+    clientspec_path = args.clientspec_path
+    must_save_clientspec_path = (kp5clientspec not in p4config)
+
+    # clientspec content
+    #
+    if clientspec_path.startswith("//"):
+        clientspec_content = env.p4print(clientspec_path, changelist=args.changelist)
+        if clientspec_content is None:
+            if args.changelist:
+                print("error: no such file: %s%s" % (clientspec_path, args.changelist), file=sys.stderr)
+            else:
+                print("error: no such file: %s" % (clientspec_path), file=sys.stderr)
+            raise SystemExit(1)
+    else:
+        if not env.file_exists(clientspec_path):
+            print("error: file not found: %s" % (clientspec_path), file=sys.stderr)
+            raise SystemExit(1)
+        if not os.path.isabs(clientspec_path):
+            clientspec_path = os.path.abspath(os.path.join(env.getcwd(), clientspec_path))
+        try:
+            clientspec_content = env.readfile(clientspec_path)
+        except IOError as ex:
+            print("error: can not read file: %s" % (ex), file=sys.stderr)
+            raise SystemExit(1)
+
+    # filtered mappings
+    #
+    mappings = mappings_from_clientspec(clientspec_content, workspace_name)
+
+    # workspace definition
+    #
+    cwd = env.getcwd()
+    workspace_def = textwrap.dedent("""\
+        Client: {workspace_name}
+        Root: {cwd}
+        Options: allwrite noclobber compress unlocked nomodtime rmdir
+        View:
+        """.format(**vars())) + mappings
+    try:
+        env.p4client_i(workspace_def)
+    except AssertionError as ex:
+        print(ex)
+        dump_filename = "/tmp/p5workspace.txt"
+        open(dump_filename, "w").write(workspace_def)
+        print("The attempted workspace definition is written into %s" % dump_filename)
+        raise SystemExit(2)
+
+    try:
+        # save .perforce
+        #
+        if must_save_workspace_name or must_save_clientspec_path:
+            with open(env.p4config_filename(), "a") as config_file:
+                if must_save_workspace_name:
+                    print("%s=%s" % (kp4client, workspace_name), file=config_file)
+                if must_save_clientspec_path:
+                    print("%s=%s" % (kp5clientspec, clientspec_path), file=config_file)
+
+        # sync
+        #
+        env.p4sync(changelist=args.changelist)
+    except:
+        env.p4client_d(workspace_name)
+        raise
+
+    print("Created workspace:", workspace_name)
+    print("Workspace directory:", cwd)
+    print("Clientspec:", clientspec_path)
+    if args.changelist:
+        print("Synced to changelist: %s" % (args.changelist))
 
 
+#
+# `p5 status`
+#
+def cmd_status(args):
+    verify_p4_present()
 
-def status(args):
     edit_part, revert_part, opened_part = inspect(args)
 
     for status, _, path in edit_part:
@@ -147,194 +194,399 @@ def status(args):
         print("{0:>12} {1}".format(status, path))
 
 
+#
+# `p5 update`
+#
+def cmd_update(args):
+    verify_p4_present()
 
-def reconcile(args):
-    editor = os.getenv("EDITOR")
-    if not editor:
-        warn_about_vi = True
-        editor = "vi"
+    p4info = env.p4info()
+    client_name = p4info["clientName"]
+    client_root = p4info["clientRoot"]
+    if "*unknown*" == client_name:
+        print("error: no workspace here", file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        p4config = env.p4config()
+    except FileNotFoundError:
+        print("error: no perforce config file found", file=sys.stderr)
+        raise SystemExit(1)
+
+    if kp5clientspec not in p4config:
+        print("error: no {} in config file".format(kp5clientspec), file=sys.stderr)
+        raise SystemExit(1)
+
+    postsync_warnings = ""
+
+    # update clientspec
+    clientspec_path = p4config[kp5clientspec]
+    if clientspec_path.startswith('//'):
+        # clientspec is in depot
+        #
+        must_fetch = True
+
+        # check if this file is mapped to clientview and locally modified, and use local modifications instead
+        output = parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "diff", "-sl", clientspec_path], stderr=subprocess.DEVNULL, universal_newlines=True))
+        if output and output[0]["status"] != "same":
+            clientspec_path = output[0]["clientFile"] # this is local path
+            warning = "*** NOTICE: Clientspec is locally modified! Using local file instead: {0}".format(clientspec_path)
+            print(warning)
+            postsync_warnings += warning + "\n"
+            mappings = open(clientspec_path, "r").read()
+            must_fetch = False
+
+        output = parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "opened", clientspec_path], stderr=subprocess.DEVNULL, universal_newlines=True))
+        if output:
+            # note `output[0]["clientFile"]` is NOT local path
+            clientspec_path = parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "have", clientspec_path], stderr=subprocess.DEVNULL, universal_newlines=True)) [0] ["path"]
+            warning = "*** NOTICE: Clientspec is opened for edit! Using local file instead: {0}".format(clientspec_path)
+            print(warning)
+            postsync_warnings += warning + "\n"
+            mappings = open(clientspec_path, "r").read()
+            must_fetch = False
+
+        if must_fetch:
+            if args.changelist:
+                print("Fetching clientspec from depot: {0} changelist {1}".format(clientspec_path, args.changelist))
+            else:
+                print("Fetching clientspec from depot: {0}".format(clientspec_path))
+            mappings = env.p4print(clientspec_path, changelist=args.changelist)
     else:
-        warn_about_vi = False
+        # clientspec is a local file
+        #
+        mappings = open(clientspec_path, "r").read()
+
+    # replace whatever client name there is with current client name
+    mappings = mappings_from_clientspec(mappings, client_name)
+
+    # recreate client
+    original_workspace_def = subprocess.check_output([env.p4_path, "client", "-o"], universal_newlines=True)
+    needle = "\nView:\n"
+    workspace_def = original_workspace_def[:original_workspace_def.find(needle)+len(needle)] + mappings
+    try:
+        env.p4client_i(workspace_def)
+    except AssertionError as ex:
+        print(ex)
+        dump_filename = "/tmp/p5workspace.txt"
+        open(dump_filename, "w").write(workspace_def)
+        print("The attempted workspace definition is written into %s" % dump_filename)
+        raise SystemExit(2)
+
+    # sync
+    try:
+        env.p4sync(dry=args.dry, force=args.force, changelist=args.changelist)
+    finally:
+        # when `-n` flag is used, restore workspace to its previous state (also handles Ctrl+C)
+        if args.dry:
+            env.p4client_i(original_workspace_def)
+
+
+
+#
+# `p5 reconcile`
+#
+def cmd_reconcile(args):
+    editor = os.getenv("EDITOR")
 
     edit_part, revert_part, opened_part = inspect(args)
 
-    def warn(f):
-        nonlocal warn_about_vi
-        if warn_about_vi:
-            print("""
-# You are running `vi` because EDITOR environment variable is not set.
-# To save and exit, type `:wq<Enter>`. To delete the line under the cursor, type `dd`.
-# Select multiple lines with `V` then delete selection with `d` or cancel it with `Esc`. To undo, type `u`.
-# To exit without saving, type `:q!`
-""", end='', file=f)
-            warn_about_vi = False
-
-    if edit_part or revert_part:
-        tempy_path = "/tmp/{0}_pfs_reconcile.txt".format(os.getenv("USER"))
-        tempy = open(tempy_path,"w")
-        print("""\
-#!/bin/sh
-#
-# Save and exit to perform these commands. Edit to remove unwanted commands.
-# Quit without saving to cancel.
-""", end='', file=tempy)
-        warn(tempy)
-
-        if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
-        for _, command, path in edit_part:
-            flag = ""
-            escapedPath = shellEscape(path)
-            if ('@' in path) or ('#' in path) or ('%' in path):
-                if command == "add":
-                    flag = " -f"
-                elif (command == "delete") or (command == "edit"):
-                    escapedPath = p4escape(escapedPath)
-            print("p4 {0}{1} {2}".format(command, flag, escapedPath), file=tempy)
-
-        if revert_part: print("\n\n# Opened but not changed (revert recommended):\n", file=tempy)
-        for _, _, path in revert_part:
-            print("p4 revert {0}".format(shellEscape(path)), file=tempy)
-
-        if opened_part: print("\n\n# For information only. Opened files:\n", file=tempy)
-        for status, _, path in opened_part:
-            print("# {0:>12} {1}".format(status, path), file=tempy)
-
-        tempy.close()
-        del tempy
-        mtime = os.stat(tempy_path).st_mtime
-        if os.system("'{0}' '{1}'".format(editor, tempy_path)):
-            print("Editor exited with error status, abort.")
-        elif mtime == os.stat(tempy_path).st_mtime:
-            print("File not saved => aborted. The file is saved at\n\t{0}".format(tempy_path))
-        else:
-            if 0 == os.system("/bin/sh '{0}'".format(tempy_path)):
-                os.unlink(tempy_path)
-            else:
-                print("Error performing commands, whatever. The file is saved at\n\t{0}".format(tempy_path))
-    else:
+    if not (edit_part or revert_part):
         print("\nNothing to reconcile.")
         if opened_part:
             print()
             print("The list of already opened files:")
             for status, _, path in opened_part:
-                print("{0:>12} {1}".format(status, path))
+                print("{0:>22} {1}".format(status, path))
+        return
+
+    tempy_path = "/tmp/{0}_p5_reconcile.txt".format(os.getenv("USER"))
+    tempy = open(tempy_path,"w")
+    print(textwrap.dedent("""\
+            #!/bin/sh
+            #
+            # Save and exit to perform these commands. Edit to remove unwanted commands.
+            # Quit without saving to cancel.
+            """), end='', file=tempy)
+
+    if not editor:
+        editor = "vi"
+        print(textwrap.dedent("""\
+                # You are running `vi` because EDITOR environment variable is not set.
+                # To save and exit, type `:wq<Enter>`. To delete the line under the cursor, type `dd`.
+                # Select multiple lines with `V` then delete selection with `d` or cancel it with `Esc`. To undo, type `u`.
+                # To exit without saving, type `:q!`
+                """), end='', file=tempy)
+
+    if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
+    for _, command, path in edit_part:
+        flag = ""
+        escapedPath = shellEscape(path)
+        if ('@' in path) or ('#' in path) or ('%' in path):
+            if command == "add":
+                flag = " -f"
+            elif (command == "delete") or (command == "edit"):
+                escapedPath = p4escape(escapedPath)
+        print("p4 {0}{1} {2}".format(command, flag, escapedPath), file=tempy)
+        if command == "add":
+            print("# rm -vf {}   # delete".format(escapedPath), file=tempy)
+            print(file=tempy)
+        elif (command == "delete") or (command == "edit"):
+            print("# p4 sync -f {}   # revert".format(escapedPath), file=tempy)
+            print(file=tempy)
+
+    if revert_part: print("\n\n# Opened but not changed (revert recommended):\n", file=tempy)
+    for _, _, path in revert_part:
+        print("p4 revert {0}".format(shellEscape(path)), file=tempy)
+
+    if opened_part: print("\n\n# For information only. Opened files:\n", file=tempy)
+    for status, _, path in opened_part:
+        print("# {0:>22} {1}".format(status, path), file=tempy)
+
+    tempy.close()
+    del tempy
+    mtime = os.stat(tempy_path).st_mtime
+    if os.system("'{0}' '{1}'".format(editor, tempy_path)):
+        print("Editor exited with error status, abort.")
+    elif mtime == os.stat(tempy_path).st_mtime:
+        print("File not saved => aborted. The file is saved at\n\t{0}".format(tempy_path))
+    else:
+        if 0 == os.system("/bin/sh '{0}'".format(tempy_path)):
+            os.unlink(tempy_path)
+        else:
+            print("Error performing commands, whatever. The file is saved at\n\t{0}".format(tempy_path))
 
 
 
-def diff(args):
+def cmd_diff(args):
     edit_part, revert_part, opened_part = inspect(args)
 
     paths = '\n'.join(path for _,_,path in edit_part+opened_part).encode('utf-8')
 
-    pager_cmd = os.getenv('PFS_PAGER') or os.getenv('PAGER') or '/usr/bin/less -R'
+    pager_cmd = os.getenv('P5PAGER') or os.getenv('PAGER') or '/usr/bin/less -R'
     sh = subprocess.Popen("p4 -x - diff -f | %s" % pager_cmd, shell=True, stdin=subprocess.PIPE)
     sh.communicate(paths)
 
 
 
-def sync(args):
-    workspace_exists = check_workspace()
-    if (not args.create) and (not workspace_exists):
-        print("No workspace here. Run with `-n` if you want to auto create it.", file=sys.stderr)
+#
+#
+#
+kp4client = "P4CLIENT"
+kp5clientspec = "P5CLIENTSPEC"
+
+kStatusPrefixOpen = "open/"
+kStatusNew = "new"
+kStatusDelete = "delete"
+kStatusUnchanged = "open/unchanged"
+# these are defined by `p4`, you can't change them
+kStatusMissing = "missing"
+kStatusDiff = "diff"
+kStatusSame = "same"
+
+def inspect(args):
+    verify_p4_present()
+
+    p4info = env.p4info()
+    client_name = p4info["clientName"]
+    client_root = p4info["clientRoot"]
+    if "*unknown*" == client_name:
+        print("error: no workspace here", file=sys.stderr)
         raise SystemExit(1)
 
-    import re, os.path, fnmatch
-    viewdef = subprocess.check_output("p4 client -o", shell=True, universal_newlines=True)
-    client = re.search(r'''^Client:\s+(.*)''', viewdef, re.M).group(1)
-    root = re.search(r'''^Root:\s+(.*)''', viewdef, re.M).group(1)
+    statuses = {}
 
-    postsync_warnings = ""
+    print("Checking opened files...", file=sys.stderr)
+    actionForOpenedWSPath = {rec["clientFile"] : rec["action"] for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "opened"], universal_newlines=True))}
+    for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "where"] + list(actionForOpenedWSPath.keys()), universal_newlines=True)):
+        statuses[p4unescape(rec["path"])] = kStatusPrefixOpen + actionForOpenedWSPath[rec["clientFile"]]
 
-    # update clientspec
-    workspace_config_filename = os.path.join(root, p4config)
-    if (workspace_exists or args.create) and os.path.exists(workspace_config_filename):
-        m = re.search(r'''P5CLIENTSPEC\s*=\s*(.*)\s*$''', open(workspace_config_filename, "r").read(), re.M)
-        if m:
-            clientspec_path = m.group(1)
-            if clientspec_path.startswith('//'):
-                # check if this file is mapped to clientview and locally modified, and use local modifications instead
-                must_fetch = True
-                if workspace_exists:
-                    output = subprocess.check_output("p4 diff -sl {0} 2>/dev/null".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
-                    m = re.search(r'''^diff (.*)$''', output, re.M)
-                    if m:
-                        clientspec_path = m.group(1)
-                        warning = "*** NOTICE: Clientspec is locally modified! Using local file instead: {0}".format(clientspec_path)
-                        print(warning)
-                        postsync_warnings += warning + "\n"
-                        clientspec_contents = open(m.group(1), "r").read()
-                        must_fetch = False
-                
-                    output = subprocess.check_output("p4 diff -sa {0} 2>/dev/null".format(shellEscape(clientspec_path)), shell=True, universal_newlines=True)
-                    output = output.rstrip("\n")
-                    if output:
-                        clientspec_path = output
-                        warning = "*** NOTICE: Clientspec is opened for edit! Using local file instead: {0}".format(clientspec_path)
-                        print(warning)
-                        postsync_warnings += warning + "\n"
-                        clientspec_contents = open(clientspec_path, "r").read()
-                        must_fetch = False
-                
-                if must_fetch:
-                    print("Fetching clientspec from depot: {0}".format(clientspec_path))
-                    clientspec_contents = subprocess.check_output("p4 print -q " + shellEscape(clientspec_path), shell=True, universal_newlines=True)
+    print("Searching for unchanged files...", file=sys.stderr)
+    for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "diff", "-sr"], universal_newlines=True)):
+        statuses[rec["clientFile"]] = kStatusUnchanged
+
+    print("Searching for modified and deleted files...", file=sys.stderr)
+    for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "diff", "-sl"], universal_newlines=True)):
+        # files returned by previous `p4 opened` check are ignored
+        if (rec["clientFile"] in statuses):
+            continue
+        # {missing | diff | same}
+        statuses[rec["clientFile"]] = rec["status"]
+
+    print("Searching for new files...", file=sys.stderr)
+    for root, dirs, files in os.walk(client_root):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            if filepath not in statuses:
+                statuses[filepath] = kStatusNew
+
+    # filter statuses with .p4ignore
+    print("Filtering...", file=sys.stderr)
+    p4ignore = os.path.join(client_root, ".p4ignore")
+    ignores = [line.replace(os.sep, '/').strip() for line in open(p4ignore)] if os.path.exists(p4ignore) else []
+    while "" in ignores:
+        ignores.remove("")
+    ignores.append("/" + os.path.basename(env.p4config_filename()))
+
+    edit_part, revert_part, opened_part = [], [], []
+    command_from_status = { kStatusMissing : "delete", kStatusDiff : "edit", kStatusNew : "add" }
+    destination_from_status = { kStatusMissing : edit_part, kStatusDiff : edit_part, kStatusNew : edit_part }
+    for path in sorted(statuses.keys()):
+        if (statuses[path] == kStatusSame) or is_ignored('/' + os.path.relpath(path, client_root), ignores):
+            continue
+        status = statuses[path]
+
+        # ignore resource forks problem with 'apple' file types
+        # http://theaccidentalreleaseengineer.blogspot.ru/2007/12/perforce-apple-filetype-and-mysterious.html
+        if status == kStatusNew:
+            basename = os.path.basename(path)
+            dirname = os.path.dirname(path)
+            if basename.startswith('%') and (os.path.join(dirname, basename[1:]) in statuses):
+                continue
+
+        if status == kStatusUnchanged:
+            revert_part.append((status, "revert", path))
+        elif status.startswith(kStatusPrefixOpen):
+            opened_part.append((status, None, path))
+        else:
+            edit_part.append((status, command_from_status[status], path))
+
+    return (edit_part, revert_part, opened_part)
+
+
+#
+#
+#
+class P5Env:
+    def __init__(self):
+        self.p4_path = "p4"
+
+    def is_p4_present(self):
+        try:
+            return 0 == subprocess.call([self.p4_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            return False
+
+    def p4info(self):
+        return parse_ztag(subprocess.check_output([self.p4_path, "-ztag", "info"], universal_newlines=True)) [0]
+
+    def getcwd(self):
+        return os.getcwd()
+
+    def p4config_filename(self):
+        config_filename = ".perforce"
+        if "P4CONFIG" in os.environ:
+            config_filename = os.environ["P4CONFIG"]
+        return config_filename
+
+    def p4config(self):
+        return parse_config(self.readfile(self.p4config_filename()))
+
+    def p4clients(self):
+        return parse_ztag(subprocess.check_output([self.p4_path, "-ztag", "clients", "-u", self.p4info()["userName"]], universal_newlines=True))
+
+    def p4client_d(self, workspace_name):
+        subprocess.run([self.p4_path, "client", "-d", workspace_name], universal_newlines=True)
+
+    def p4client_i(self, workspace_definition):
+        pipe = subprocess.Popen([self.p4_path, "client", "-i"], universal_newlines=True, stdin=subprocess.PIPE)
+        (stdout, stderr) = pipe.communicate(input=workspace_definition)
+        assert 0 == pipe.returncode, "`p4 client -i` returned exit code %d" % pipe.returncode
+
+    def p4print(self, depot_path, changelist=None):
+        fileRev = (changelist if changelist else "")
+        completed_process = subprocess.run([self.p4_path, "print", "-q", p4escape(depot_path) + fileRev], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        if completed_process.stderr.strip():
+            return None
+        return completed_process.stdout
+
+    def p4sync(self, force=False, dry=False, changelist=None):
+        extra_args = []
+        if force: extra_args += ["-f"]
+        if dry: extra_args += ["-n"]
+        if changelist: extra_args += [changelist]
+        subprocess.check_call([self.p4_path, "sync"] + extra_args, universal_newlines=True)
+
+    def file_exists(self, path):
+        return os.path.exists(path)
+
+    def readfile(self, path):
+        return open(path,"r").read()
+
+env = P5Env()
+
+#
+#
+#
+def mappings_from_clientspec(clientspec_content, workspace_name):
+    clientspec_content = re.sub(r'''^("?[+\-]?//(?:.*?)\s+"?//)([^/]+)(/.*)$''', r'''\1%s\3''' % workspace_name, clientspec_content, flags=re.M)
+    # erase comments and empty lines, and add tabs as needed by `p4 client -i`
+    clientspec_content = re.sub(r'''^\s*[;#].*$''', "", clientspec_content, flags=re.M)
+    clientspec_content = os.linesep.join([ ("\t"+s) for s in clientspec_content.splitlines() if s.strip()])
+    return clientspec_content
+
+def p4escape(path):
+    return path.replace("%","%25").replace("@","%40").replace("#","%23").replace("*","%2A")
+
+def parse_config(contentstr):
+    rv = {}
+    for match in re.finditer(r'''^(?: \s* | \s* \# .* | \s* (\w+) \s* = \s* (.*?) \s* )$''', contentstr, flags=re.M|re.X):
+        if match.group(1):
+            rv[match.group(1)] = match.group(2)
+    return rv
+
+def parse_ztag(contentstr):
+    rv = []
+    dictobj = {}
+    for match in re.finditer(r'''^(?:|... \s (\w+) \s (.*))$''', contentstr, flags=re.M|re.X):
+        if match.group(1):
+            dictobj[match.group(1)] = match.group(2)
+        else:
+            if len(dictobj):
+                rv.append(dictobj)
+            dictobj = {}
+    if len(dictobj):
+        rv.append(dictobj)
+    return rv
+
+def verify_p4_present():
+    if not env.is_p4_present():
+        print("fatal error: Perforce command line tool `p4` can not be found", file=sys.stderr)
+        raise SystemExit(3)
+
+def shellEscape(p):
+    if set(p).intersection( set(r'''~!@#$%^&*(){}[]"'\|<>? ''') ):
+        return "'" + p.replace("'", "\'\"\'\"\'") + "'"
+    return p
+
+def p4unescape(path):
+    return path.replace("%40","@").replace("%23","#").replace("%2A","*").replace("%25","%")
+
+def is_ignored(path, ignores):
+    basename = os.path.basename(path)
+    for patt in ignores:
+        # shortcut for speed
+        if basename == patt:
+            return True
+        if '/' in patt:
+            # match full path, rooted at client_root
+
+            if patt.endswith('/'):
+                if patt.startswith('/') or patt.startswith('*'):
+                    if fnmatch.fnmatch(path, patt + '*'):
+                        return True
+                else:
+                    if fnmatch.fnmatch(path, '*/' + patt + '*'):
+                        return True
             else:
-                clientspec_contents = open(clientspec_path, "r").read()
-
-            # replace whatever client name there is with current client name
-            clientspec_contents = re.sub(r'''^("?[+\-]?//(?:.*?)\s+"?//)([^/]+)(/.*)$''', r'''\1%s\3''' % client, clientspec_contents, flags=re.M)
-            # erase comments and empty lines, and add tabs as needed by `p4 client -i`
-            clientspec_contents = re.sub(r'''^\s*;.*$''', "", clientspec_contents, flags=re.M)
-            clientspec_contents = os.linesep.join([ ("\t"+s) for s in clientspec_contents.splitlines() if s.strip()])
-
-            # recreate client
-            new_clientspec = viewdef
-            new_clientspec = re.sub(r'''^(Options:\s+)(.*)$''', r'''\1allwrite noclobber compress unlocked nomodtime rmdir''', new_clientspec, flags=re.M)
-            new_clientspec = re.sub(r'''^View:\s*\n.*''', "", new_clientspec, flags=re.DOTALL|re.M)
-            new_clientspec += "\nView:\n" + clientspec_contents
-            proc = subprocess.Popen("p4 client -i", stdin=subprocess.PIPE, shell=True, universal_newlines=True)
-            proc.communicate(input=new_clientspec)
-            if proc.returncode != 0:
-                open("/tmp/clientspec.txt", "w").write(new_clientspec)
-                print("The attempted workspace definition is saved to /tmp/p5clientspec.txt", file=sys.stderr)
-                raise SystemExit(1)
-            workspace_exists = check_workspace()
-
-    if not workspace_exists:
-        print("Creating workspace failed. Make sure you have `$P4CONFIG` file in workspace root with `P4CLIENT` (and optionally `P5CLIENTSPEC`) variables defined.", file=sys.stderr)
-        raise SystemExit(1)
-
-    # then simply run `p4 sync`
-    exitcode = os.system("p4 sync" + (" -f" if args.forced else ""))
-    if (0 == exitcode) and postsync_warnings:
-        print(postsync_warnings, end='')
+                if fnmatch.fnmatch(path, patt):
+                    return True
+        else:
+            # match basename only
+            if fnmatch.fnmatch(basename, patt):
+                return True
+    return False
 
 
-
-import argparse
-parser = argparse.ArgumentParser()
-subparsers = parser.add_subparsers(dest="command", help="Commands")
-
-st_parser = subparsers.add_parser("status", aliases=["st"], help="Shows status of workspace files (changed, missing, etc)")
-st_parser.set_defaults(func=status)
-
-re_parser = subparsers.add_parser("reconcile", aliases=['re'], help="Interactively reconcile changes.")
-re_parser.set_defaults(func=reconcile)
-
-di_parser = subparsers.add_parser("diff", aliases=['di'], help="Show diff, including unopened files.")
-di_parser.set_defaults(func=diff)
-
-sync_parser = subparsers.add_parser("update", aliases=['up'], help="Fetches the latest clientspec, updates client view, runs `p4 sync`. May create workspace if needed.")
-sync_parser.add_argument("--force", "-f", dest="forced", action="store_true", help="Pass `-f` to `p4 sync`")
-###sync_parser.add_argument("--changelist", "-c", dest="changelist", help="Changelist number to use")
-sync_parser.add_argument("--new", "-n", dest="create", action="store_true", help="Create workspace if it does not exist")
-sync_parser.set_defaults(func=sync)
-
-parser.add_argument("--version", action="version", version="%(prog)s 0.5")
-args = parser.parse_args()
-
-if hasattr(args, 'func'):
-    args.func(args)
-else:
-    parser.print_help()
-
+if __name__ == '__main__':
+    main(sys.argv)

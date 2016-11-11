@@ -2,26 +2,64 @@
 
 This script provides a few commands I miss from Perforce command-line utilities.
 
-    usage: p5 [-h] {status,st,reconcile,re,diff,di,update,up} ...
+    usage: p5 [-h] [--version]
+              {checkout,co,status,st,update,up,reconcile,re,diff,di} ...
 
     positional arguments:
-      {status,st,reconcile,re,diff,di,update,up}
+      {checkout,co,status,st,update,up,reconcile,re,diff,di}
                             Commands
-        status (st)         Shows status of workspace files (changed, missing,
-                            etc)
-        reconcile (re)      Interactively reconcile changes.
+        checkout (co)       Create workspace and fetch files.
+        status (st)         Show local changes, including unopened files that were
+                            changed/added/removed.
+        update (up)         Update client view with the latest clientspec mappings
+                            then sync.
+        reconcile (re)      Interactive reconcile
         diff (di)           Show diff, including unopened files.
-        update (up)         Fetches the latest clientspec, updates client view,
-                            runs `p4 sync`. May create workspace if needed.
 
     optional arguments:
       -h, --help            show this help message and exit
+      --version             show program's version number and exit
 
 ## Commands
 
+### `p5 checkout`
+
+Creates workspace from given clientspec mappings file and fetches files.
+
+    usage: p5 checkout [-h] [-c workspace] clientspec_path [@changelist]
+
+    Creates workspace in the current directory from given clientspec mappings
+    file, and syncs.
+
+    positional arguments:
+      clientspec_path       Depot path or local path to the client workspace
+                            mappings file. The value is saved into P5CLIENTSPEC
+                            variable and is used later by `update`, `reconcile`
+                            and other commands.
+      @changelist           Sync to this changelist number. Defaults to the most
+                            recent changelist.
+
+    optional arguments:
+      -h, --help            show this help message and exit
+      -c workspace, --client workspace
+                            Set P4CLIENT for the new workspace. Defaults to
+                            `${P4USER}-$(basename $PWD)` (for example, is user
+                            name is `john_d` and current directory is
+                            `~/Documents/NewProj`, the default workspace name is
+                            `john_d-NewProj`). The value is saved into P4CLIENT
+                            variable and will be used by all perforce tools (`p4`
+                            and `p5` both).
+
+Clientspec path and workspace name are automatically saved into `P4CONFIG` (`.perforce`) for future use with `p5 update` and `p5 reconcile`:
+
+    # $WORKSPACE_ROOT/.perforce
+
+    P4CLIENT=current-workspace-name
+    P5CLIENTSPEC=//depot/path/to/client_view_definition.txt
+
 ### `p5 reconcile`
 
-Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`. Works much, *much*, **much** faster than P4V's one. It is also much more comfortable to use than builtin `p4 reconcile`, and is available even with old Perforce servers.
+Interactive reconcile. Uses `$EDITOR` environment variable for user interaction, which defaults to `vi`. Works much much much faster than P4V's one and respects `.p4ignore`. It is also much more comfortable to use than builtin `p4 reconcile`, and is available even with old Perforce servers.
 
 ### `p5 status`
 
@@ -35,18 +73,18 @@ Shows combined diff similar to `p4 diff`, but including unopened files that were
 
 Updates workspace if necessary, then runs `p4 sync`.
 
-    usage: p5 update [-h] [--force] [--create]
+    usage: p5 update [-h] [-f] [-n] [@changelist]
+
+    positional arguments:
+      @changelist    Sync to this changelist number. Defaults to the most recent
+                     changelist.
 
     optional arguments:
-      -h, --help   show this help message and exit
-      --force, -f  Pass `-f` to `p4 sync`
-      --new, -n    Create workspace if it does not exist
+      -h, --help     show this help message and exit
+      -f, --force    Pass `-f` to `p4 sync`
+      -n, --dry-run  Preview what would be done.
 
-If there is `P5CLIENTSPEC` variable in the `.perforce` file, pointing to a depot file or a local file, fetches contents of that file, replaces whatever client name with current workspace name in every line like `//depot/path/... //ClientName/path/...`, and rewrites your current client view.
-
-With `-n` flag, enables creation of new workspace associated with current folder using the name defined by `.perforce`. Note: the file must exist, `P4CLIENT` environment variable will not be used for this operation.
-
-In either case, this command runs `p4 sync`. The `-f` flag is passed down to `p4 sync`.
+If `P5CLIENTSPEC` is a local file, the view mappings are read from that file. If it is an opened depot file, the view mappings are read from current local copy that file. Otherwise, the clientspec mappings are fetched from the depot (for the given changelist if given). Then the current workspace is updated and `p4 sync` is invoked. If `-n` flag is present, the workspace is reverted back when the command is done.
 
 ## Installation and Configuration
 
@@ -54,9 +92,9 @@ There is Homebrew formula for easy installation/upgrade on OS X:
 
     brew install hamstergene/tap/p5
 
-If you are not using Homebrew or not on OS X, you can clone git repository and symlink `p5` where you need it - this is one-file utility. This script depends on `python3` and `perforce` packages. The Homebrew formula from above will automatically install them as dependencies; if you're installing manually, make sure `python3` and `p4` command are available in `PATH`.
+If you are not using Homebrew or not on OS X, you can clone git repository and symlink `p5` where you need it - this is one-file utility. This script depends on `python3` package.
 
-This script assumes that `p4` command line tool is already configured and works from current folder. If it's not, you need to add something like this to your `~/.profile`:
+`p4` command line tool must be present and configured as necessary. If it's not, you need to add something like this to your `~/.profile`:
 
     export P4PORT=perforce.mycompany.com:1666
     export P4USER=MyUsername
@@ -79,10 +117,9 @@ Then do `p4 login` and check whether workspace name has been detected correctly 
 If the workspace root contains `.p4ignore` file, it will be used. The format is similar to `.gitignore`:
 
 * One pattern per line.
-* If pattern does not contain '/', it matches filename only.
-* If pattern starts with '/', it matches absolute paths
-* If the pattern has a '/' but not at the beginning, it matches anywhere in the checkout, so 'generated/' would match foo/generated/ as well as 3rdParth/extras/generaged/
-* Patterns are matched using `fnmatch` (supports `*` wildcards).
+* If pattern does not contain '/', it matches files anywhere in workspace tree.
+* If pattern ends with '/', it matches directories anywhere in workspace tree.
+* If pattern starts with '/', it will only match absolute paths rooted at workspace, e.g. `/tags` matches `tags` file in workspace root, but not elsewhere in the tree.
 * `.p4ignore` file itself is not ignored by default. You should add it there youself when you are not going to keep it under version control.
 
 ## Misc
