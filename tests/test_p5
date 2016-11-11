@@ -40,8 +40,8 @@ class p5units(unittest.TestCase):
                 p5bar = baz baz baz
             """)) )
 
-    def test_is_ignored_simple_patterns(self):
-        # just filename pattern -- ignores files anywhere in the tree (e.g. '.DS_Store', '*.bak')
+    def test_is_ignored_filenames(self):
+        # just a pattern -- ignores files anywhere in the tree (e.g. '.DS_Store', '*.bak')
         ignores = [
             "just_filename.txt",
             "*.bak",
@@ -50,19 +50,37 @@ class p5units(unittest.TestCase):
         self.assertTrue(p5.is_ignored("/just_filename.txt", ignores))
         self.assertTrue(p5.is_ignored("/subdir/just_filename.txt", ignores))
         self.assertTrue(p5.is_ignored("/subdir/subsubdir/just_filename.txt", ignores))
-        self.assertFalse(p5.is_ignored("/just_filename", ignores))
-        self.assertFalse(p5.is_ignored("/just.txt", ignores))
+        self.assertFalse(p5.is_ignored("/just_filename.txt/nope", ignores))
 
         self.assertTrue(p5.is_ignored("/foobar.bak", ignores))
         self.assertTrue(p5.is_ignored("/subdir/foobar.bak", ignores))
         self.assertTrue(p5.is_ignored("/subdir/subsubdir/foobar.bak", ignores))
-        self.assertFalse(p5.is_ignored("/foobar", ignores))
+        self.assertFalse(p5.is_ignored("/foobar.bak/nope", ignores))
         self.assertFalse(p5.is_ignored("/bak", ignores))
 
         self.assertTrue(p5.is_ignored("/.DS_Store", ignores))
         self.assertTrue(p5.is_ignored("/subdir/.DS_Store", ignores))
         self.assertTrue(p5.is_ignored("/subdir/subsubdir/.DS_Store", ignores))
-        self.assertFalse(p5.is_ignored("/DS_Store", ignores))
+        self.assertFalse(p5.is_ignored("/no/.DS_Store/pe", ignores))
+        self.assertFalse(p5.is_ignored("/.DS_Store/notme", ignores))
+
+    def test_is_ignored_dirnames(self):
+        # just a pattern that ends with / -- ignores files under directories that match this pattern anywhere in the tree
+        ignores = [
+            "generated/",
+            "build_*_files/",
+        ]
+        self.assertTrue(p5.is_ignored("/generated/fn", ignores))
+        self.assertTrue(p5.is_ignored("/generated/subdir/fn", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/generated/fn", ignores))
+        self.assertFalse(p5.is_ignored("/generated", ignores))
+        self.assertFalse(p5.is_ignored("/subdir/generated", ignores))
+
+        self.assertTrue(p5.is_ignored("/build_x86_files/fn", ignores))
+        self.assertTrue(p5.is_ignored("/build_x64_files/fn", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/build_x86_files/fn", ignores))
+        self.assertTrue(p5.is_ignored("/subdir/build_x64_files/fn", ignores))
+        self.assertFalse(p5.is_ignored("/build_x86_files", ignores))
 
     def test_is_ignored_path(self):
         # if pattern starts with '/', matches paths
@@ -83,16 +101,6 @@ class p5units(unittest.TestCase):
         self.assertTrue(p5.is_ignored("/debug/qux.txt", ignores))
         self.assertTrue(p5.is_ignored("/debug/debug", ignores))
         self.assertFalse(p5.is_ignored("/debug", ignores))
-
-    def test_is_ignored_dirs(self):
-        # if pattern ends with '/', matches anything under that directory
-        ignores = [
-            "/bar/ignoreme/",
-        ]
-        self.assertTrue(p5.is_ignored("/bar/ignoreme/foo.txt", ignores))
-        self.assertTrue(p5.is_ignored("/bar/ignoreme/baz/qux.txt", ignores))
-        self.assertFalse(p5.is_ignored("/foo/ignoreme/foo.txt", ignores))
-        self.assertFalse(p5.is_ignored("/bar/ignoreme", ignores))
 
 
 if __name__ == '__main__':

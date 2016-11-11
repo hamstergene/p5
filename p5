@@ -570,9 +570,14 @@ def is_ignored(path, ignores):
             return True
         if '/' in patt:
             # match full path, rooted at client_root
+
             if patt.endswith('/'):
-                if fnmatch.fnmatch(path, patt + '*'):
-                    return True
+                if patt.startswith('/') or patt.startswith('*'):
+                    if fnmatch.fnmatch(path, patt + '*'):
+                        return True
+                else:
+                    if fnmatch.fnmatch(path, '*/' + patt + '*'):
+                        return True
             else:
                 if fnmatch.fnmatch(path, patt):
                     return True
@@ -581,7 +586,6 @@ def is_ignored(path, ignores):
             if fnmatch.fnmatch(basename, patt):
                 return True
     return False
-
 
 
 if __name__ == '__main__':
