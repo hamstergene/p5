@@ -400,7 +400,6 @@ def inspect(args):
     actionForOpenedWSPath = {rec["clientFile"] : rec["action"] for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "opened"], universal_newlines=True))}
     if actionForOpenedWSPath:
         for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "where"] + list(actionForOpenedWSPath.keys()), universal_newlines=True)):
-            print(rec)
             statuses[p4unescape(rec["path"])] = kStatusPrefixOpen + actionForOpenedWSPath[rec["clientFile"]]
 
     print("Searching for unchanged files...", file=sys.stderr)
