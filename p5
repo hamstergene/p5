@@ -461,6 +461,7 @@ def inspect(args):
 class P5Env:
     def __init__(self):
         self.p4_path = "p4"
+        self._p4info = None
 
     def is_p4_present(self):
         try:
@@ -469,7 +470,9 @@ class P5Env:
             return False
 
     def p4info(self):
-        return parse_ztag(subprocess.check_output([self.p4_path, "-ztag", "info"], universal_newlines=True)) [0]
+        if not self._p4info:
+            self._p4info = parse_ztag(subprocess.check_output([self.p4_path, "-ztag", "info"], universal_newlines=True)) [0]
+        return self._p4info
 
     def getcwd(self):
         return os.getcwd()
@@ -478,7 +481,7 @@ class P5Env:
         config_filename = ".perforce"
         if "P4CONFIG" in os.environ:
             config_filename = os.environ["P4CONFIG"]
-        return config_filename
+        return os.path.join(self.p4info()["clientRoot"], config_filename)
 
     def p4config(self):
         return parse_config(self.readfile(self.p4config_filename()))
