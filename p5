@@ -297,7 +297,7 @@ def cmd_reconcile(args):
             print()
             print("The list of already opened files:")
             for status, _, path in opened_part:
-                print("{0:>22} {1}".format(status, path))
+                print("{0:>16}   {1}".format(status, path))
         return
 
     tempy_path = "/tmp/{0}_p5_reconcile.txt".format(os.getenv("USER"))
@@ -305,43 +305,67 @@ def cmd_reconcile(args):
     print(textwrap.dedent("""\
             #!/bin/sh
             #
-            # Save and exit to perform these commands. Edit to remove unwanted commands.
+            # This is a shell script.
+            # Save and exit to perform these commands. Edit them as appropriate.
             # Quit without saving to cancel.
             """), end='', file=tempy)
 
     if not editor:
         editor = "vi"
         print(textwrap.dedent("""\
-                # You are running `vi` because EDITOR environment variable is not set.
-                # To save and exit, type `:wq<Enter>`. To delete the line under the cursor, type `dd`.
-                # Select multiple lines with `V` then delete selection with `d` or cancel it with `Esc`. To undo, type `u`.
-                # To exit without saving, type `:q!`
+                # You are running `vi` because EDITOR environment variable is not set. To change editor, add `export EDITOR=<editor-cmd>` to `~/profile`.
+                #
+                # A short cheat sheet (in case this is your first time):
+                #
+                # Save and exit = `:wq<Enter>`
+                # Exit without saving (to cancel reconcile) = `:q!`
+                # Cut line to clipboard = `dd`
+                # Paste line = `p` (above) or `P` (below)
+                # Select multiple lines = `V`
+                #    Cancel selection = `Esc`
+                #    Cut selection to clipboard = `d`
+                # Undo = `u`
+                # Redo = `Ctrl+R`
                 """), end='', file=tempy)
 
-    if edit_part: print("\n\n# Unopened changes:\n", file=tempy)
+    print("\n\n# Mark for add:", file=tempy)
+    print("xargs -- p4 add -f <<-FILES_TO_ADD", file=tempy)
     for _, command, path in edit_part:
-        flag = ""
-        escapedPath = shellEscape(path)
-        if ('@' in path) or ('#' in path) or ('%' in path):
-            if command == "add":
-                flag = " -f"
-            elif (command == "delete") or (command == "edit"):
-                escapedPath = p4escape(escapedPath)
-        print("p4 {0}{1} {2}".format(command, flag, escapedPath), file=tempy)
         if command == "add":
-            print("# rm -vf {}   # delete".format(escapedPath), file=tempy)
-            print(file=tempy)
-        elif (command == "delete") or (command == "edit"):
-            print("# p4 sync -f {}   # revert".format(escapedPath), file=tempy)
-            print(file=tempy)
+            print("\t" + path, file=tempy)
+    print("FILES_TO_ADD", file=tempy)
 
-    if revert_part: print("\n\n# Opened but not changed (revert recommended):\n", file=tempy)
+    print("\n\n# Delete these local files:", file=tempy)
+    print("xargs -- rm -fv <<-FILES_TO_LOCALLY_DELETE", file=tempy)
+    print("FILES_TO_LOCALLY_DELETE", file=tempy)
+
+    print("\n\n# Check out:", file=tempy)
+    print("xargs -- p4 edit <<-FILES_TO_EDIT", file=tempy)
+    for _, command, path in edit_part:
+        if command == "edit":
+            print("\t" + p4escape(path), file=tempy)
+    print("FILES_TO_EDIT", file=tempy)
+
+    print("\n\n# Mark for delete:", file=tempy)
+    print("xargs -- p4 delete <<-FILES_TO_MARK_DELETED", file=tempy)
+    for _, command, path in edit_part:
+        if command == "delete":
+            print("\t" + p4escape(path), file=tempy)
+    print("FILES_TO_MARK_DELETED", file=tempy)
+
+    print("\n\n# Undo changes:", file=tempy)
+    print("xargs -- p4 sync -f <<-FILES_TO_UNDO", file=tempy)
+    print("FILES_TO_UNDO", file=tempy)
+
+    print("\n\n# Opened but not changed (you should close these files):", file=tempy)
+    print("xargs -- p4 revert <<-FILES_TO_REVERT", file=tempy)
     for _, _, path in revert_part:
-        print("p4 revert {0}".format(shellEscape(path)), file=tempy)
+        print("\t" + path, file=tempy)
+    print("FILES_TO_REVERT", file=tempy)
 
-    if opened_part: print("\n\n# For information only. Opened files:\n", file=tempy)
+    print("\n\n# For information only. Opened files:\n", file=tempy)
     for status, _, path in opened_part:
-        print("# {0:>22} {1}".format(status, path), file=tempy)
+        print("# {0:>16}   {1}".format(status, path), file=tempy)
 
     tempy.close()
     del tempy
