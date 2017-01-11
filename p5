@@ -84,6 +84,7 @@ def cmd_checkout(args):
 
     # workspace name
     #
+    userName = p4info["userName"]
     if args.client:
         if (kp4client in p4config) and args.client != p4config[kp4client]:
             print("`%s` value '%s' conflicts with command line option '%s'." % (kp4client, p4config[kp4client], args.client), file=sys.stderr)
@@ -94,7 +95,7 @@ def cmd_checkout(args):
         workspace_name = p4config[kp4client]
         must_save_workspace_name = False
     else:
-        workspace_name = p4info["userName"] + "-" + os.path.basename(os.path.abspath(env.getcwd()))
+        workspace_name = userName + "-" + os.path.basename(os.path.abspath(env.getcwd()))
         must_save_workspace_name = True
         for clientProps in env.p4clients():
             if clientProps["client"] == workspace_name:
@@ -141,6 +142,7 @@ def cmd_checkout(args):
     cwd = env.getcwd()
     workspace_def = textwrap.dedent("""\
         Client: {workspace_name}
+        Owner: {userName}
         Root: {cwd}
         Options: allwrite noclobber compress unlocked nomodtime rmdir
         View:
@@ -187,11 +189,11 @@ def cmd_status(args):
     edit_part, revert_part, opened_part = inspect(args)
 
     for status, _, path in edit_part:
-        print("{0:>12} {1}".format(status, path))
+        print("{0:>19} {1}".format(status, path))
     for status, _, path in revert_part:
-        print("{0:>12} {1}".format(status, path))
+        print("{0:>19} {1}".format(status, path))
     for status, _, path in opened_part:
-        print("{0:>12} {1}".format(status, path))
+        print("{0:>19} {1}".format(status, path))
 
 
 #
@@ -413,10 +415,10 @@ def inspect(args):
 
     p4info = env.p4info()
     client_name = p4info["clientName"]
-    client_root = p4info["clientRoot"]
     if "*unknown*" == client_name:
         print("error: no workspace here", file=sys.stderr)
         raise SystemExit(1)
+    client_root = p4info["clientRoot"]
 
     statuses = {}
 
@@ -428,6 +430,8 @@ def inspect(args):
 
     print("Searching for unchanged files...", file=sys.stderr)
     for rec in parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "diff", "-sr"], universal_newlines=True)):
+        if (rec["clientFile"] in statuses) and (statuses[rec["clientFile"]].startswith(kStatusPrefixOpen + 'move')):
+            continue
         statuses[rec["clientFile"]] = kStatusUnchanged
 
     print("Searching for modified and deleted files...", file=sys.stderr)
@@ -505,7 +509,9 @@ class P5Env:
         config_filename = ".perforce"
         if "P4CONFIG" in os.environ:
             config_filename = os.environ["P4CONFIG"]
-        return os.path.join(self.p4info()["clientRoot"], config_filename)
+        p4info = self.p4info()
+        clientRoot = p4info["clientRoot"] if "clientRoot" in p4info else os.getcwd()
+        return os.path.join(clientRoot, config_filename)
 
     def p4config(self):
         return parse_config(self.readfile(self.p4config_filename()))
