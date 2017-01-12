@@ -1,3 +1,7 @@
+0.7.1:
+- more readable reconcile script
+- minor bug fixes
+
 0.7:
 - added "checkout" command for creating workspace
 - removed creating workspace functionality from "update"
