@@ -5,11 +5,11 @@ def main(argv):
     parser = argparse.ArgumentParser(prog=os.path.basename(argv[0]))
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
+    def validate_changelist_argument(arg):
+        if re.match(r'''@\d+''', arg):
+            return arg
+        raise RuntimeError("invalid changelist number: %s" % arg)
     def add_changelist_argument(parser):
-        def validate_changelist_argument(arg):
-            if re.match(r'''@\d+''', arg):
-                return arg
-            raise RuntimeError("invalid changelist number: %s" % arg)
         parser.add_argument("changelist", metavar="@changelist", type=validate_changelist_argument, default=None, nargs='?',
             help="Sync to this changelist number. Defaults to the most recent changelist.")
 
@@ -56,6 +56,22 @@ def main(argv):
             help="Show diff, including unopened files.")
         parser.set_defaults(func=cmd_diff)
     make_argparser_diff()
+
+    def make_argparser_merge():
+        parser = subparsers.add_parser("merge", aliases=['me'],
+            help="Create a new changelist, merge/integrate and automatically resolve given changelist or range or changelists, optionally submitting.")
+        def validate_revrange_argument(arg):
+            if re.match(r'''@\d+''', arg):
+                return arg
+            raise RuntimeError("invalid changelist number: %s" % arg)
+        parser.add_argument("changelists", metavar="@changelist", type=validate_changelist_argument, default=None, nargs='+',
+            help="One or more changelists to integrate.")
+        parser.add_argument("-b", "--branch-mapping", dest="branch_mapping", required=True,
+                help="Use the given branch mapping (p4 integrate -b).")
+        parser.add_argument("-r", "--reverse", dest="reverse_mapping", action="store_true",
+                help="Reverse the given branch mapping (p4 integrate -r -b).")
+        parser.set_defaults(func=cmd_merge)
+    make_argparser_merge()
 
     parser.add_argument("--version", action="version", version="%(prog)s 0.7.1")
     args = parser.parse_args(argv[1:])
@@ -204,10 +220,10 @@ def cmd_update(args):
 
     p4info = env.p4info()
     client_name = p4info["clientName"]
-    client_root = p4info["clientRoot"]
     if "*unknown*" == client_name:
         print("error: no workspace here", file=sys.stderr)
         raise SystemExit(1)
+    client_root = p4info["clientRoot"]
 
     try:
         p4config = env.p4config()
@@ -392,6 +408,69 @@ def cmd_diff(args):
     pager_cmd = os.getenv('P5PAGER') or os.getenv('PAGER') or '/usr/bin/less -R'
     sh = subprocess.Popen("p4 -x - diff -f | %s" % pager_cmd, shell=True, stdin=subprocess.PIPE)
     sh.communicate(paths)
+
+
+
+def cmd_merge(args):
+    verify_p4_present()
+
+    p4info = env.p4info()
+    client_name = p4info["clientName"]
+    if "*unknown*" == client_name:
+        print("error: no workspace here", file=sys.stderr)
+        raise SystemExit(1)
+
+    # get descriptions
+    range_args = [cl+','+cl[1:] for cl in args.changelists]
+    changes = parse_ztag(subprocess.check_output([env.p4_path, "-ztag", "changes", "-l"] + range_args, universal_newlines=True))
+
+    # create a new pending changelist
+    descriptions = "merging " + ' '.join("@{}".format(change["change"]) for change in changes)
+    filtered_descs = []
+    for change in changes:
+        if change["desc"].lstrip().lower().startswith("followup"):
+            continue
+        filtered_descs.append(change["desc"])
+    if len(filtered_descs) == 0:
+        descriptions = descriptions + " " + " ".join(change["desc"] for change in changes) + "\n"
+    elif len(filtered_descs) == 1:
+        descriptions = descriptions + " " + filtered_descs[0] + "\n"
+    else:
+        descriptions = descriptions + "\n" + "\n".join("  - "+fd for fd in filtered_descs) + "\n"
+    descriptions = textwrap.indent(descriptions, "\t")
+    changelist_definition = textwrap.dedent("""\
+        Change: new
+        Description:
+        """.format(**vars())) + descriptions
+    print(changelist_definition)
+    pipe = subprocess.Popen([env.p4_path, "change", "-i"], universal_newlines=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    (stdout, stderr) = pipe.communicate(input=changelist_definition)
+    if 0 != pipe.returncode:
+        print("Failed to create a new pending changelist.", file=sys.stderr)
+        raise SystemExit(pipe.returncode)
+    new_cl = re.search(r'''Change (\d+) created''', stdout).group(1)
+
+    try:
+        # integrate into that changelist
+        intargs = ["-b", args.branch_mapping]
+        if args.reverse_mapping:
+            intargs += ["-r"]
+        intargs += ["-c", new_cl]
+        intargs += range_args
+        retcode = subprocess.call([env.p4_path, "integrate", "-Rs"] + intargs, universal_newlines=True)
+        print(stdout)
+        if retcode != 0:
+            print("Integrate operation failed.", file=sys.stderr)
+            subprocess.call([env.p4_path, "change", "-d", new_cl])
+            raise SystemExit(retcode)
+
+        # client_root = p4info["clientRoot"]
+    except:
+        subprocess.call([env.p4_path, "change", "-d", new_cl])
+        raise
+
+    subprocess.check_call([env.p4_path, "resolve", "-am", "-c", new_cl], universal_newlines=True)
+
 
 
 
