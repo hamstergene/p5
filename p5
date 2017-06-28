@@ -73,7 +73,7 @@ def main(argv):
         parser.set_defaults(func=cmd_merge)
     make_argparser_merge()
 
-    parser.add_argument("--version", action="version", version="%(prog)s 0.7.1")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.8")
     args = parser.parse_args(argv[1:])
 
     if hasattr(args, 'func'):
